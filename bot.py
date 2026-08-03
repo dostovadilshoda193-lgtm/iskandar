@@ -881,6 +881,11 @@ def support_start(message):
     if check_ban(message): return
     uid = message.from_user.id
     if uid == ADMIN_ID:
+        bot.send_message(
+            uid,
+            "ℹ️ Bu tugma oddiy foydalanuvchilar uchun — ular yozganda sizga "
+            "\"↩️ Javob berish\" tugmasi bilan xabar keladi, shu orqali javob berasiz."
+        )
         return
     user_state[uid] = "support_msg"
     bot.send_message(uid, "💬 Adminga yuboriladigan xabaringizni yozing:", reply_markup=types.ReplyKeyboardRemove())
@@ -4951,15 +4956,206 @@ def biznes_xizmatlar(message):
             "└ E'lon qidiruv ro'yxatida doim eng yuqorida turadi\n\n"
             "⚡ *E'lonni 7 kun tepaga chiqarish:* 7 000 so'm\n"
             "└ Har kuni avtomatik eng birinchi o'ringa ko'tariladi\n\n"
-            "👉 Kerakli xizmat ustiga bosib faollashtiring:"
+            "👉 Bosing — so'rovingiz adminga ketadi, tasdiqlangach darhol faollashadi:"
         )
         markup.add(
-            types.InlineKeyboardButton("💎 Premium obuna (15.000 so'm)", url=f"{ADMIN_LINK}?text=Premium_obuna_15000"),
-            types.InlineKeyboardButton("🔥 VIP e'lon sotib olish (10.000 so'm)", url=f"{ADMIN_LINK}?text=VIP_elon_10000"),
-            types.InlineKeyboardButton("⚡ 7 kun tepaga chiqarish (7.000 so'm)", url=f"{ADMIN_LINK}?text=Tepaga_chiqarish_7000")
+            types.InlineKeyboardButton("💎 Premium obuna (15.000 so'm)", callback_data="premium_sorov"),
+            types.InlineKeyboardButton("🔥 VIP e'lon sotib olish (10.000 so'm)", callback_data="vip_elon_sorov"),
+            types.InlineKeyboardButton("⚡ 7 kun tepaga chiqarish (7.000 so'm)", callback_data="tepaga_sorov")
         )
 
     bot.send_message(uid, text, parse_mode="Markdown", reply_markup=markup)
+
+
+# ============================================================
+#  💎 PREMIUM / VIP / TEPAGA CHIQARISH — HAQIQIY SO'ROV OQIMI
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data == "premium_sorov")
+def premium_sorov_yuborish(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    user = get_user(uid)
+    if user.get("premium"):
+        bot.send_message(uid, "✅ Sizda allaqachon Premium 💎 maqomi bor!")
+        return
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"premreq_accept_{uid}"),
+        types.InlineKeyboardButton("❌ Rad etish", callback_data=f"premreq_reject_{uid}"),
+    )
+    bot.send_message(
+        ADMIN_ID,
+        f"💎 **Premium obuna so'rovi**\n\n👤 {md_escape(user.get('name','?'))} (`{uid}`)\n"
+        f"📞 {md_escape(user.get('phone','?'))}\n💰 Narxi: 15 000 so'm",
+        parse_mode="Markdown", reply_markup=markup
+    )
+    bot.send_message(uid, "✅ So'rovingiz adminga yuborildi. To'lovni kelishib, admin tasdiqlagach "
+                          "Premium 💎 darhol faollashadi.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("premreq_accept_"))
+def premium_sorov_qabul(call):
+    if call.from_user.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    uid_str = call.data.replace("premreq_accept_", "")
+    user = get_user(int(uid_str))
+    user["premium"] = True
+    update_user(int(uid_str), user)
+    try:
+        bot.edit_message_text(f"{call.message.text}\n\n✅ TASDIQLANDI — PREMIUM FAOLLASHTIRILDI", ADMIN_ID, call.message.message_id)
+    except Exception:
+        pass
+    try:
+        bot.send_message(int(uid_str), "🎉 Tabriklaymiz! Premium 💎 obunangiz faollashtirildi. Endi cheksiz e'lon joylay olasiz!")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("premreq_reject_"))
+def premium_sorov_rad(call):
+    if call.from_user.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    uid_str = call.data.replace("premreq_reject_", "")
+    try:
+        bot.edit_message_text(f"{call.message.text}\n\n❌ RAD ETILDI", ADMIN_ID, call.message.message_id)
+    except Exception:
+        pass
+    try:
+        bot.send_message(int(uid_str), "❌ Premium obuna so'rovingiz rad etildi. Admin bilan bog'laning: @" + ADMIN_USERNAME)
+    except Exception:
+        pass
+
+
+def _foydalanuvchi_faol_elonlari_markup(uid, callback_prefiks):
+    user = get_user(uid)
+    elonlar = load_elonlar()
+    faol = [(eid, elonlar[eid]) for eid in user.get("elonlar", []) if eid in elonlar and elon_faolmi(elonlar[eid])]
+    if not faol:
+        return None
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for eid, e in faol:
+        markup.add(types.InlineKeyboardButton(f"№{eid} — {e.get('sarlavha','?')}", callback_data=f"{callback_prefiks}_{eid}"))
+    return markup
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "vip_elon_sorov")
+def vip_elon_sorov_boshlash(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    markup = _foydalanuvchi_faol_elonlari_markup(uid, "vipreq")
+    if not markup:
+        bot.send_message(uid, "❌ Sizda hozircha faol e'lon yo'q. Avval e'lon joylang.")
+        return
+    bot.send_message(uid, "🔥 Qaysi e'loningizni VIP qilmoqchisiz?", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("vipreq_"))
+def vip_elon_sorov_yuborish(call):
+    uid = call.from_user.id
+    eid = call.data.replace("vipreq_", "")
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"vipacc_{uid}_{eid}"),
+        types.InlineKeyboardButton("❌ Rad etish", callback_data=f"vipraj_{uid}"),
+    )
+    bot.send_message(ADMIN_ID, f"🔥 **VIP e'lon so'rovi**\n\n👤 `{uid}`\n🆔 E'lon №{eid}\n💰 Narxi: 10 000 so'm",
+                     parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(uid, "✅ So'rovingiz yuborildi. Admin tasdiqlagach e'loningiz VIP bo'ladi.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("vipacc_"))
+def vip_elon_qabul(call):
+    if call.from_user.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    _, uid_str, eid = call.data.split("_")
+    elonlar = load_elonlar()
+    if eid in elonlar:
+        elonlar[eid]["is_vip"] = True
+        save_elonlar(elonlar)
+    try:
+        bot.edit_message_text(f"{call.message.text}\n\n✅ TASDIQLANDI — E'LON VIP QILINDI", ADMIN_ID, call.message.message_id)
+    except Exception:
+        pass
+    try:
+        bot.send_message(int(uid_str), f"🎉 №{eid} e'loningiz endi 🔥 VIP maqomiga ega!")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("vipraj_"))
+def vip_elon_rad(call):
+    if call.from_user.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    uid_str = call.data.replace("vipraj_", "")
+    try:
+        bot.edit_message_text(f"{call.message.text}\n\n❌ RAD ETILDI", ADMIN_ID, call.message.message_id)
+    except Exception:
+        pass
+    try:
+        bot.send_message(int(uid_str), "❌ VIP e'lon so'rovingiz rad etildi.")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "tepaga_sorov")
+def tepaga_sorov_boshlash(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    markup = _foydalanuvchi_faol_elonlari_markup(uid, "tepareq")
+    if not markup:
+        bot.send_message(uid, "❌ Sizda hozircha faol e'lon yo'q. Avval e'lon joylang.")
+        return
+    bot.send_message(uid, "⚡ Qaysi e'loningizni tepaga chiqarmoqchisiz?", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("tepareq_"))
+def tepaga_sorov_yuborish(call):
+    uid = call.from_user.id
+    eid = call.data.replace("tepareq_", "")
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"tepaacc_{uid}_{eid}"),
+        types.InlineKeyboardButton("❌ Rad etish", callback_data=f"teparaj_{uid}"),
+    )
+    bot.send_message(ADMIN_ID, f"⚡ **Tepaga chiqarish so'rovi**\n\n👤 `{uid}`\n🆔 E'lon №{eid}\n💰 Narxi: 7 000 so'm",
+                     parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(uid, "✅ So'rovingiz yuborildi. Admin tasdiqlagach e'loningiz ro'yxat boshiga chiqadi.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("tepaacc_"))
+def tepaga_sorov_qabul(call):
+    if call.from_user.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    _, uid_str, eid = call.data.split("_")
+    elonlar = load_elonlar()
+    if eid in elonlar:
+        elonlar[eid]["boost_at"] = int(time.time())
+        save_elonlar(elonlar)
+    try:
+        bot.edit_message_text(f"{call.message.text}\n\n✅ TASDIQLANDI — E'LON TEPAGA CHIQARILDI", ADMIN_ID, call.message.message_id)
+    except Exception:
+        pass
+    try:
+        bot.send_message(int(uid_str), f"⚡ №{eid} e'loningiz ro'yxat boshiga chiqarildi!")
+    except Exception:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("teparaj_"))
+def tepaga_sorov_rad(call):
+    if call.from_user.id != ADMIN_ID: return
+    bot.answer_callback_query(call.id)
+    uid_str = call.data.replace("teparaj_", "")
+    try:
+        bot.edit_message_text(f"{call.message.text}\n\n❌ RAD ETILDI", ADMIN_ID, call.message.message_id)
+    except Exception:
+        pass
+    try:
+        bot.send_message(int(uid_str), "❌ Tepaga chiqarish so'rovingiz rad etildi.")
+    except Exception:
+        pass
 
 
 # ---- 📢 E'LON BERISH JARAYONI ----
