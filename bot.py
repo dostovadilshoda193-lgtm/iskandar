@@ -745,6 +745,10 @@ class AdminNazoratMiddleware(BaseMiddleware):
     def post_process(self, update_obj, data, exception=None):
         if exception:
             log.error(f"Handler xatoligi: {exception}")
+            try:
+                bot.send_message(ADMIN_ID, f"⚠️ **Bot xatoligi yuz berdi:**\n\n`{exception}`", parse_mode="Markdown")
+            except Exception:
+                pass
 
 
 bot.setup_middleware(AdminNazoratMiddleware())
@@ -1821,8 +1825,19 @@ def hub_hamyon(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "hub_premium")
 def hub_premium(call):
-    bot.answer_callback_query(call.id)
-    biznes_xizmatlar(FakeMessage(call.from_user.id, "⭐ Obuna / VIP"))
+    uid = call.from_user.id
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
+    try:
+        biznes_xizmatlar(FakeMessage(uid, "⭐ Obuna / VIP"))
+    except Exception as e:
+        log.error(f"hub_premium xatoligi: {e}")
+        try:
+            bot.send_message(uid, f"❌ Xatolik: {e}")
+        except Exception:
+            pass
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "hub_tolov_tarix")
