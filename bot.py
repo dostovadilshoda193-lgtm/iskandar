@@ -15,6 +15,10 @@ from telebot import types
 from telebot.handler_backends import BaseMiddleware
 from google import genai
 from fpdf import FPDF
+from dotenv import load_dotenv
+
+# .env yoki muhit o'zgaruvchilarini yuklash
+load_dotenv()
 
 # ============================================================
 #  LOGGING SOZLAMALARI
@@ -32,19 +36,18 @@ log = logging.getLogger("bot")
 # ============================================================
 #  ASOSIY SOZLAMALAR
 # ============================================================
-# ⚠️ ESLATMA: bu tokenlarni ENDI ALMASHTIRING (BotFather /revoke va Gemini
-# konsolida yangi kalit) — eski qiymatlar ochiq suhbatda ko'rilgan.
-BOT_TOKEN = "8933589522:AAGOVM9KkV-2fBwZQ8pVMykAcN0BqPPkehc"
+# Railway Variables'dan xavfsiz o'qib olish:
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 ADMIN_ID = 8548782312
 ADMIN_USERNAME = "dostovv"
 ADMIN_LINK = f"https://t.me/{ADMIN_USERNAME}"
- 
-GEMINI_API_KEY = "AQ.Ab8RN6JCiGsBcZAn_3TKVokbrgEcxqYZA6w1bc8J61njczG84A"
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 if not ai_client:
     log.warning("GEMINI_API_KEY yo'q — Gemini AI bo'limi ishlamaydi.")
- 
 
 
 
