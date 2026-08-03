@@ -1,0 +1,5 @@
+requests
+pyTelegramBotAPI
+google-genai
+fpdf
+python-dotenv
