@@ -4964,7 +4964,7 @@ def biznes_xizmatlar(message):
             types.InlineKeyboardButton("⚡ 7 kun tepaga chiqarish (7.000 so'm)", callback_data="tepaga_sorov")
         )
 
-    bot.send_message(uid, text, parse_mode="Markdown", reply_markup=markup)
+    xavfsiz_yuborish(uid, text, reply_markup=markup)
 
 
 # ============================================================
@@ -4973,24 +4973,34 @@ def biznes_xizmatlar(message):
 @bot.callback_query_handler(func=lambda call: call.data == "premium_sorov")
 def premium_sorov_yuborish(call):
     uid = call.from_user.id
-    bot.answer_callback_query(call.id)
-    user = get_user(uid)
-    if user.get("premium"):
-        bot.send_message(uid, "✅ Sizda allaqachon Premium 💎 maqomi bor!")
-        return
-    markup = types.InlineKeyboardMarkup()
-    markup.add(
-        types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"premreq_accept_{uid}"),
-        types.InlineKeyboardButton("❌ Rad etish", callback_data=f"premreq_reject_{uid}"),
-    )
-    bot.send_message(
-        ADMIN_ID,
-        f"💎 **Premium obuna so'rovi**\n\n👤 {md_escape(user.get('name','?'))} (`{uid}`)\n"
-        f"📞 {md_escape(user.get('phone','?'))}\n💰 Narxi: 15 000 so'm",
-        parse_mode="Markdown", reply_markup=markup
-    )
-    bot.send_message(uid, "✅ So'rovingiz adminga yuborildi. To'lovni kelishib, admin tasdiqlagach "
-                          "Premium 💎 darhol faollashadi.")
+    try:
+        bot.answer_callback_query(call.id)
+    except Exception:
+        pass
+    try:
+        user = get_user(uid)
+        if user.get("premium"):
+            bot.send_message(uid, "✅ Sizda allaqachon Premium 💎 maqomi bor!")
+            return
+        markup = types.InlineKeyboardMarkup()
+        markup.add(
+            types.InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"premreq_accept_{uid}"),
+            types.InlineKeyboardButton("❌ Rad etish", callback_data=f"premreq_reject_{uid}"),
+        )
+        bot.send_message(
+            ADMIN_ID,
+            f"💎 **Premium obuna so'rovi**\n\n👤 {md_escape(user.get('name','?'))} (`{uid}`)\n"
+            f"📞 {md_escape(user.get('phone','?'))}\n💰 Narxi: 15 000 so'm",
+            parse_mode="Markdown", reply_markup=markup
+        )
+        bot.send_message(uid, "✅ So'rovingiz adminga yuborildi. To'lovni kelishib, admin tasdiqlagach "
+                              "Premium 💎 darhol faollashadi.")
+    except Exception as e:
+        log.error(f"Premium so'rovida xatolik: {e}")
+        try:
+            bot.send_message(uid, f"❌ Xatolik yuz berdi: {e}\nQayta urinib ko'ring yoki adminga yozing.")
+        except Exception:
+            pass
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("premreq_accept_"))
