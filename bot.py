@@ -13,6 +13,10 @@ import telebot
 from telebot import types
 from telebot.handler_backends import BaseMiddleware
 from google import genai
+try:
+    from google.genai import types as genai_types
+except Exception:
+    genai_types = None
 from fpdf import FPDF
 
 # ============================================================
@@ -75,6 +79,7 @@ TAQIQLANGAN_SOZLAR_BOSHLANGICH = ["tentak", "axmoq", "jinni", "aroq", "narkotik"
 BLACKLIST_FILE = "blacklist.json"
 NEWS_FILE = "yangiliklar.json"
 EVENTS_FILE = "tadbirlar.json"
+QUIZ_FILE = "savollar.json"
 
 # ---- STATIK MA'LUMOTLAR BAZASI ----
 VILOYATLAR = [
@@ -194,6 +199,7 @@ KATEGORIYALAR = [
     ("📚 Kitob", "ktb"), ("🎮 O'yin-kulgi", "oyn"), ("💍 Zargarlik", "zgar"),
     ("🏋 Sport", "sprt"), ("🐶 Hayvonlar", "hayv"), ("💼 Biznes", "biz"),
     ("💼 Ish o'rni", "ish"), ("🏠 Ijaraga uy", "ijara"), ("🚚 Yetkazib berish", "yetkaz"),
+    ("🚗 Hamrohlik taksi", "poputka"), ("🔎 Yo'qolgan/Topilgan", "topilma"),
     ("🔁 Boshqa", "bshq")
 ]
 
@@ -313,7 +319,9 @@ def get_user(user_id):
             "referral_count": 0, "referred_by": None,
             "joined_date": datetime.now().strftime("%d.%m.%Y"),
             "balance": 0, "balance_tarix": [],
-            "bildirishnoma": True, "tungi_rejim": False, "promo_ishlatilgan": []
+            "bildirishnoma": True, "tungi_rejim": False, "promo_ishlatilgan": [],
+            "xp": 0, "streak_count": 0, "last_checkin": None, "ai_ishlatish_soni": 0,
+            "taksi_km_jami": 0
         }
         save_db(db)
     return db[uid]
@@ -613,6 +621,14 @@ def event_qoshish(matn):
         "sana": datetime.now().strftime("%d.%m.%Y %H:%M"), "matn": matn
     })
     _save_json(EVENTS_FILE, data)
+
+
+def load_quizzes():
+    return _load_json(QUIZ_FILE)
+
+
+def save_quizzes(data):
+    _save_json(QUIZ_FILE, data)
 
 
 # ============================================================
@@ -1090,6 +1106,79 @@ def admin_del_word(message):
 
 
 # ============================================================
+#  📊 KUNLIK SAVOLNOMA / VIKTORINA (XP tizimi) — admin boshqaradi
+# ============================================================
+@bot.message_handler(commands=['savol'])
+def admin_savol_yuborish(message):
+    if message.from_user.id != ADMIN_ID: return
+    try:
+        qismlar = message.text.split(maxsplit=1)[1].split("|")
+        savol_matni = qismlar[0].strip()
+        variantlar = [v.strip() for v in qismlar[1:-1]]
+        togri_idx = int(qismlar[-1].strip()) - 1
+        if not (0 <= togri_idx < len(variantlar)) or len(variantlar) < 2:
+            raise ValueError
+    except Exception:
+        bot.reply_to(
+            message,
+            "⚠️ Format: `/savol Savol matni?|Variant1|Variant2|Variant3|Variant4|TogriRaqam`\n"
+            "Masalan: `/savol Poytaxtimiz qaysi shahar?|Samarqand|Toshkent|Buxoro|Xiva|2`",
+            parse_mode="Markdown"
+        )
+        return
+
+    quizzes = load_quizzes() or {}
+    qid = str(int(time.time()))
+    quizzes[qid] = {"savol": savol_matni, "variantlar": variantlar, "togri": togri_idx, "javob_berganlar": {}}
+    save_quizzes(quizzes)
+
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for i, v in enumerate(variantlar):
+        markup.add(types.InlineKeyboardButton(v, callback_data=f"quizans_{qid}_{i}"))
+
+    db = load_db()
+    yuborildi = 0
+    for uid_str in db.keys():
+        try:
+            bot.send_message(int(uid_str), f"🧠 **Bugungi savol!**\n\n{savol_matni}\n\n"
+                                           f"✅ To'g'ri javob bersangiz +10 XP olasiz!",
+                             parse_mode="Markdown", reply_markup=markup)
+            yuborildi += 1
+        except Exception:
+            pass
+    bot.reply_to(message, f"✅ Savol {yuborildi} ta foydalanuvchiga yuborildi.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("quizans_"))
+def savolga_javob(call):
+    uid = call.from_user.id
+    _, qid, tanlangan_idx = call.data.split("_")
+    tanlangan_idx = int(tanlangan_idx)
+    quizzes = load_quizzes() or {}
+    quiz = quizzes.get(qid)
+    if not quiz:
+        bot.answer_callback_query(call.id, "❌ Bu savol muddati tugagan.")
+        return
+    if str(uid) in quiz.get("javob_berganlar", {}):
+        bot.answer_callback_query(call.id, "ℹ️ Siz bu savolga allaqachon javob bergansiz.", show_alert=True)
+        return
+
+    togri = tanlangan_idx == quiz["togri"]
+    quiz.setdefault("javob_berganlar", {})[str(uid)] = tanlangan_idx
+    quizzes[qid] = quiz
+    save_quizzes(quizzes)
+
+    if togri:
+        user = get_user(uid)
+        user["xp"] = user.get("xp", 0) + 10
+        update_user(uid, user)
+        bot.answer_callback_query(call.id, "✅ To'g'ri! +10 XP", show_alert=True)
+    else:
+        togri_matn = quiz["variantlar"][quiz["togri"]]
+        bot.answer_callback_query(call.id, f"❌ Noto'g'ri. To'g'ri javob: {togri_matn}", show_alert=True)
+
+
+# ============================================================
 #  🔁 ESKI TUGMA FUNKSIYALARINI YANGI INLINE MENYUDAN QAYTA
 #  ISHLATISH UCHUN "SOXTA XABAR" YORDAMCHISI
 # ============================================================
@@ -1163,6 +1252,7 @@ def hub_elonlar(message):
         types.InlineKeyboardButton("📤 Ulashish", callback_data="hub_elon_ulashish"),
         types.InlineKeyboardButton("👀 Ko'rilganlar", callback_data="hub_korilganlar"),
         types.InlineKeyboardButton("💬 Xaridorlar xabarlari", callback_data="hub_xaridor_xabarlar"),
+        types.InlineKeyboardButton("📸 AI bilan rasmdan e'lon", callback_data="hub_smart_skaner"),
     )
     bot.send_message(uid, "🛒 **E'lonlar bo'limi:**", parse_mode="Markdown", reply_markup=markup)
 
@@ -1346,8 +1436,16 @@ def hub_ai(message):
         types.InlineKeyboardButton("💻 Kod yozish", callback_data="hub_ai_kod"),
         types.InlineKeyboardButton("📄 PDF yaratish", callback_data="hub_ai_pdf"),
         types.InlineKeyboardButton("🖼️ Rasm yaratish", callback_data="hub_ai_rasm"),
+        types.InlineKeyboardButton("🧮 Masalani rasmdan yech", callback_data="hub_ai_masala"),
+        types.InlineKeyboardButton("📝 Kunlik test (5 savol)", callback_data="hub_ai_kunlik_test"),
     )
-    bot.send_message(uid, "🤖 **AI bo'limi** — nima qilishni xohlaysiz?", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(
+        uid,
+        "🤖 **AI bo'limi** — nima qilishni xohlaysiz?\n\n"
+        "🎤 _Istalgan vaqtda menga to'g'ridan-to'g'ri ovozli xabar yuborsangiz ham, "
+        "uni matnga o'girib javob beraman!_",
+        parse_mode="Markdown", reply_markup=markup
+    )
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "hub_ai_chat")
@@ -1396,6 +1494,7 @@ def ai_preset_javob(message):
     try:
         response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prefiks + message.text)
         bot.edit_message_text(response.text, chat_id=uid, message_id=sent_msg.message_id)
+        ai_ishlatish_belgila(uid)
     except Exception as e:
         log.error(f"AI preset xatoligi: {e}")
         bot.edit_message_text("❌ Xatolik yuz berdi, qayta urinib ko'ring.", chat_id=uid, message_id=sent_msg.message_id)
@@ -1422,6 +1521,7 @@ def ai_pdf_yaratish(message):
     pdf.output(yoli)
     with open(yoli, "rb") as f:
         bot.send_document(uid, f, caption="📄 Hujjatingiz tayyor!")
+    ai_ishlatish_belgila(uid)
     bot.send_message(uid, "Yana nima qilamiz?", reply_markup=get_main_keyboard(uid))
 
 
@@ -1446,6 +1546,7 @@ def ai_rasm_yaratish(message):
         r.raise_for_status()
         bot.delete_message(uid, sent_msg.message_id)
         bot.send_photo(uid, r.content, caption=f"🖼️ Tayyor: {message.text}")
+        ai_ishlatish_belgila(uid)
     except Exception as e:
         log.warning(f"Rasm generatsiyasida xatolik: {e}")
         try:
@@ -1456,10 +1557,233 @@ def ai_rasm_yaratish(message):
     bot.send_message(uid, "Yana nima qilamiz?", reply_markup=get_main_keyboard(uid))
 
 
+def ai_ishlatish_belgila(uid):
+    user = get_user(uid)
+    user["ai_ishlatish_soni"] = user.get("ai_ishlatish_soni", 0) + 1
+    update_user(uid, user)
+
+
 # ============================================================
-#  💰 PUL VA PREMIUM BO'LIMI (hub)
+#  🎤 OVOZLI XABARNI TUSHUNUVCHI AI (Voice-to-Text)
 # ============================================================
-@bot.message_handler(func=lambda m: m.text == "💰 Pul va Premium")
+@bot.message_handler(content_types=["voice"])
+def ovozli_xabar_qabul(message):
+    if check_ban(message): return
+    uid = message.from_user.id
+    if not ai_client or genai_types is None:
+        bot.send_message(uid, "❌ Ovozli xabarlarni tushunish hozircha sozlanmagan.")
+        return
+
+    sent_msg = bot.send_message(uid, "🎤 Ovozli xabaringiz tinglanmoqda...")
+    try:
+        file_info = bot.get_file(message.voice.file_id)
+        audio_bytes = bot.download_file(file_info.file_path)
+        audio_part = genai_types.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg")
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                audio_part,
+                "Bu foydalanuvchidan kelgan ovozli xabar. Avval uni matnga o'gir (bir qatorda), "
+                "so'ng shu so'rovga o'zbek tilida qisqa va aniq javob ber. Format:\n"
+                "🎤 Aytganingiz: <matn>\n\n💬 Javob: <javob>"
+            ],
+        )
+        bot.edit_message_text(response.text, chat_id=uid, message_id=sent_msg.message_id)
+        ai_ishlatish_belgila(uid)
+    except Exception as e:
+        log.error(f"Ovozli xabarni qayta ishlashda xatolik: {e}")
+        try:
+            bot.edit_message_text("❌ Ovozli xabarni tushunishda xatolik yuz berdi. Qayta urinib ko'ring yoki matn yozing.",
+                                  chat_id=uid, message_id=sent_msg.message_id)
+        except Exception:
+            pass
+
+
+# ============================================================
+#  🧮 MASALANI RASMDAN YECHISH (AI o'quv assistenti)
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data == "hub_ai_masala")
+def hub_ai_masala_start(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    user_state[uid] = "ai_masala_rasm_kutish"
+    bot.send_message(uid, "🧮 Yechilishi kerak bo'lgan masala/misolning rasmini yuboring:")
+
+
+@bot.message_handler(content_types=["photo"], func=lambda m: user_state.get(m.from_user.id) == "ai_masala_rasm_kutish")
+def ai_masala_yechish(message):
+    uid = message.from_user.id
+    user_state.pop(uid, None)
+    if not ai_client or genai_types is None:
+        bot.send_message(uid, "❌ AI hozircha sozlanmagan.", reply_markup=get_main_keyboard(uid))
+        return
+
+    sent_msg = bot.send_message(uid, "🧮 Masala tahlil qilinmoqda...")
+    try:
+        file_info = bot.get_file(message.photo[-1].file_id)
+        img_bytes = bot.download_file(file_info.file_path)
+        img_part = genai_types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                img_part,
+                "Rasmdagi matematik/fizika/kimyo masalasini aniqla va uni bosqichma-bosqich, "
+                "har bir qadamni tushuntirib, o'zbek tilida yech. Oxirida javobni aniq ko'rsat."
+            ],
+        )
+        bot.edit_message_text(response.text[:4000], chat_id=uid, message_id=sent_msg.message_id)
+        ai_ishlatish_belgila(uid)
+    except Exception as e:
+        log.error(f"Masala yechishda xatolik: {e}")
+        try:
+            bot.edit_message_text("❌ Masalani tahlil qilishda xatolik yuz berdi. Rasm aniqroq bo'lishi kerak.",
+                                  chat_id=uid, message_id=sent_msg.message_id)
+        except Exception:
+            pass
+    bot.send_message(uid, "Yana nima qilamiz?", reply_markup=get_main_keyboard(uid))
+
+
+# ============================================================
+#  📝 KUNLIK TEST (AI o'quv assistenti)
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data == "hub_ai_kunlik_test")
+def hub_ai_kunlik_test_fan(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    buttons = [types.InlineKeyboardButton(nom, callback_data=f"kunliktest_{kod}") for nom, kod in FANLAR]
+    markup.add(*buttons)
+    bot.send_message(uid, "📝 Qaysi fandan kunlik test (5 ta savol) kerak?", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("kunliktest_"))
+def hub_ai_kunlik_test_generatsiya(call):
+    uid = call.from_user.id
+    kod = call.data.replace("kunliktest_", "")
+    nom = next((n for n, k in FANLAR if k == kod), kod)
+    bot.answer_callback_query(call.id)
+    if not ai_client:
+        bot.send_message(uid, "❌ AI hozircha sozlanmagan.")
+        return
+    sent_msg = bot.send_message(uid, f"📝 {nom} fanidan test tayyorlanmoqda...")
+    try:
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=(
+                f"'{nom}' fanidan o'quvchilar uchun 5 ta test savoli tuz (A/B/C/D variantlari bilan). "
+                f"Har bir savoldan keyin to'g'ri javobni ham yoz. O'zbek tilida, tushunarli qilib."
+            ),
+        )
+        bot.edit_message_text(response.text[:4000], chat_id=uid, message_id=sent_msg.message_id)
+        ai_ishlatish_belgila(uid)
+    except Exception as e:
+        log.error(f"Kunlik test yaratishda xatolik: {e}")
+        try:
+            bot.edit_message_text("❌ Test tayyorlashda xatolik yuz berdi. Qayta urinib ko'ring.",
+                                  chat_id=uid, message_id=sent_msg.message_id)
+        except Exception:
+            pass
+
+
+# ============================================================
+#  📸 AI "SMART-SKANER" — rasmdan e'lon va narxni aniqlash
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data == "hub_smart_skaner")
+def hub_smart_skaner_start(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    if check_sub(uid) is False:
+        send_sub_message(uid)
+        return
+    user_state[uid] = "smart_skaner_rasm_kutish"
+    bot.send_message(uid, "📸 Sotmoqchi bo'lgan buyumingiz rasmini yuboring — AI uni tahlil qilib, "
+                          "sarlavha, tavsif va taxminiy narxni o'zi taklif qiladi:")
+
+
+@bot.message_handler(content_types=["photo"], func=lambda m: user_state.get(m.from_user.id) == "smart_skaner_rasm_kutish")
+def hub_smart_skaner_tahlil(message):
+    uid = message.from_user.id
+    user_state.pop(uid, None)
+    file_id = message.photo[-1].file_id
+
+    if not ai_client or genai_types is None:
+        bot.send_message(uid, "❌ AI hozircha sozlanmagan.", reply_markup=get_main_keyboard(uid))
+        return
+
+    sent_msg = bot.send_message(uid, "📸 Rasm tahlil qilinmoqda...")
+    sarlavha, tavsif, narx = None, None, None
+    try:
+        file_info = bot.get_file(file_id)
+        img_bytes = bot.download_file(file_info.file_path)
+        img_part = genai_types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+        response = ai_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                img_part,
+                "Rasmdagi mahsulotni aniqla (masalan telefon modeli, kiyim turi, avtomobil markasi va h.k.). "
+                "Javobni ANIQ shu 3 qatorda ber, boshqa hech narsa yozma:\n"
+                "SARLAVHA: <qisqa sarlavha>\n"
+                "TAVSIF: <1-2 gapli tavsif, holati taxminiy>\n"
+                "NARX: <O'zbekiston bozoridagi taxminiy narx, so'mda>"
+            ],
+        )
+        for qator in response.text.splitlines():
+            if qator.upper().startswith("SARLAVHA:"):
+                sarlavha = qator.split(":", 1)[1].strip()
+            elif qator.upper().startswith("TAVSIF:"):
+                tavsif = qator.split(":", 1)[1].strip()
+            elif qator.upper().startswith("NARX:"):
+                narx = qator.split(":", 1)[1].strip()
+        ai_ishlatish_belgila(uid)
+    except Exception as e:
+        log.error(f"Smart-skaner xatoligi: {e}")
+
+    if not sarlavha:
+        bot.edit_message_text("❌ Rasmni tahlil qilib bo'lmadi. Qayta urinib ko'ring yoki oddiy '➕ Yangi e'lon' orqali davom eting.",
+                              chat_id=uid, message_id=sent_msg.message_id)
+        bot.send_message(uid, "Menyu:", reply_markup=get_main_keyboard(uid))
+        return
+
+    try:
+        bot.delete_message(uid, sent_msg.message_id)
+    except Exception:
+        pass
+
+    user_data_temp[uid] = {
+        "is_vip": False, "photo": file_id, "location": None,
+        "hudud": "Kiritilmagan", "tuman": "Kiritilmagan",
+        "sarlavha": sarlavha, "tavsif": tavsif or "", "narx": narx or "Kelishiladi",
+    }
+    matn = (
+        f"📸 **AI taklifi:**\n\n📌 Sarlavha: {md_escape(sarlavha)}\n📝 Tavsif: {md_escape(tavsif or '')}\n"
+        f"💰 Taxminiy narx: {md_escape(narx or 'Kelishiladi')}\n\n"
+        f"👇 Endi kategoriyani tanlang, e'lon shu ma'lumotlar bilan tayyorlanadi:"
+    )
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    buttons = [types.InlineKeyboardButton(nom, callback_data=f"smartkot_{kod}") for nom, kod in KATEGORIYALAR]
+    markup.add(*buttons)
+    bot.send_message(uid, matn, parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("smartkot_"))
+def hub_smart_skaner_kategoriya(call):
+    uid = call.from_user.id
+    kod = call.data.replace("smartkot_", "")
+    nom = next((n for n, k in KATEGORIYALAR if k == kod), kod)
+    bot.answer_callback_query(call.id)
+    if uid not in user_data_temp:
+        bot.send_message(uid, "⚠️ Xatolik, qaytadan boshlang.", reply_markup=get_main_keyboard(uid))
+        return
+    user_data_temp[uid]["kategoriya"] = nom
+    user_data_temp[uid]["kategoriya_kod"] = kod
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except Exception:
+        pass
+    elon_tekshirish_bosqichi(uid)
+
+
+
 def hub_pul(message):
     if check_ban(message): return
     uid = message.from_user.id
@@ -1694,11 +2018,24 @@ def hub_cashback(call):
     )
 
 
-# ---- PROMO KOD ----
+# ---- PROMO KOD (ba'zilari cheklangan sonli — "birinchi N kishi" tipida) ----
+PROMO_ISHLATISH_FILE = "promo_ishlatish.json"
 PROMO_KODLAR = {
-    "WELCOME2026": 5000,
-    "SALOM10": 3000,
+    "WELCOME2026": {"miqdor": 5000, "limit": None},
+    "SALOM10": {"miqdor": 3000, "limit": None},
+    "YANGIYIL2026": {"miqdor": 10000, "limit": 50},
 }
+
+
+def promo_ishlatish_sonini_ol(kod):
+    data = _load_json(PROMO_ISHLATISH_FILE) or {}
+    return data.get(kod, 0)
+
+
+def promo_ishlatish_sonini_oshir(kod):
+    data = _load_json(PROMO_ISHLATISH_FILE) or {}
+    data[kod] = data.get(kod, 0) + 1
+    _save_json(PROMO_ISHLATISH_FILE, data)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "hub_promo")
@@ -1723,12 +2060,20 @@ def promo_kod_qabul(message):
         bot.send_message(uid, "ℹ️ Siz bu promo kodni allaqachon ishlatgansiz.", reply_markup=get_main_keyboard(uid))
         return
 
-    miqdor = PROMO_KODLAR[kod]
+    promo = PROMO_KODLAR[kod]
+    limit = promo.get("limit")
+    if limit is not None and promo_ishlatish_sonini_ol(kod) >= limit:
+        bot.send_message(uid, f"❌ Afsuski, «{kod}» promo kod limiti (birinchi {limit} kishi) allaqachon to'lgan.",
+                         reply_markup=get_main_keyboard(uid))
+        return
+
+    miqdor = promo["miqdor"]
     user["balance"] = user.get("balance", 0) + miqdor
     user.setdefault("promo_ishlatilgan", []).append(kod)
     user.setdefault("balance_tarix", []).append({
         "sana": datetime.now().strftime("%d.%m.%Y %H:%M"), "miqdor": miqdor, "izoh": f"Promo kod: {kod}"
     })
+    promo_ishlatish_sonini_oshir(kod)
     update_user(uid, user)
     bot.send_message(uid, f"🎉 Promo kod qabul qilindi! Hamyoningizga {som_format(miqdor)} qo'shildi.",
                      reply_markup=get_main_keyboard(uid))
@@ -1749,6 +2094,8 @@ def hub_profil(message):
         types.InlineKeyboardButton("🎁 Do'st taklif qilish", callback_data="hub_referal"),
         types.InlineKeyboardButton("📍 Manzillarim", callback_data="hub_manzillar"),
         types.InlineKeyboardButton("🔒 Xavfsizlik", callback_data="hub_xavfsizlik"),
+        types.InlineKeyboardButton("✅ Kunlik kirish (Chek-in)", callback_data="hub_checkin"),
+        types.InlineKeyboardButton("📊 Batafsil statistikam", callback_data="hub_batafsil_stat"),
     )
     bot.send_message(uid, "👤 **Profil bo'limi:**", parse_mode="Markdown", reply_markup=markup)
 
@@ -1857,6 +2204,74 @@ def hub_xavfsizlik(call):
 
 
 # ============================================================
+#  ✅ KUNLIK KIRISH (Chek-in) VA KETMA-KETLIK MUKOFOTI (Streak)
+# ============================================================
+CHEKIN_MUKOFOTLAR = {3: 2000, 7: 5000, 30: 20000}
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_checkin")
+def hub_checkin(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    user = get_user(uid)
+    bugun = datetime.now().date()
+    oxirgi = user.get("last_checkin")
+    oxirgi_sana = datetime.strptime(oxirgi, "%d.%m.%Y").date() if oxirgi else None
+
+    if oxirgi_sana == bugun:
+        bot.send_message(uid, f"✅ Siz bugun allaqachon chek-in qilgansiz!\n🔥 Joriy ketma-ketlik: {user.get('streak_count', 0)} kun")
+        return
+
+    if oxirgi_sana == bugun - timedelta(days=1):
+        user["streak_count"] = user.get("streak_count", 0) + 1
+    else:
+        user["streak_count"] = 1
+
+    user["last_checkin"] = bugun.strftime("%d.%m.%Y")
+    streak = user["streak_count"]
+
+    matn = f"✅ Chek-in qabul qilindi!\n🔥 Ketma-ketlik: {streak} kun"
+
+    if streak in CHEKIN_MUKOFOTLAR:
+        mukofot = CHEKIN_MUKOFOTLAR[streak]
+        user["balance"] = user.get("balance", 0) + mukofot
+        user.setdefault("balance_tarix", []).append({
+            "sana": datetime.now().strftime("%d.%m.%Y %H:%M"), "miqdor": mukofot,
+            "izoh": f"Chek-in mukofoti ({streak} kunlik ketma-ketlik)"
+        })
+        matn += f"\n\n🎉 Tabriklaymiz! {streak} kunlik ketma-ketlik uchun {som_format(mukofot)} bonus oldingiz!"
+
+    update_user(uid, user)
+    bot.send_message(uid, matn)
+
+
+# ============================================================
+#  📊 SHAXSIY STATISTIKA VA INFOGRAFIKA
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data == "hub_batafsil_stat")
+def hub_batafsil_stat(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    user = get_user(uid)
+    elonlar = load_elonlar()
+    mening_elonlar = [eid for eid in user.get("elonlar", []) if eid in elonlar]
+    jami_korish = sum(elonlar[eid].get("korishlar", 0) for eid in mening_elonlar)
+
+    matn = (
+        f"📊 **Sizning shaxsiy statistikangiz**\n\n"
+        f"📢 Bergan e'lonlaringiz: {len(mening_elonlar)} ta (jami {jami_korish} marta ko'rilgan)\n"
+        f"🚖 Taksida bosib o'tilgan masofa: {round(user.get('taksi_km_jami', 0), 1)} km\n"
+        f"🤖 AI xizmatlaridan foydalanish: {user.get('ai_ishlatish_soni', 0)} marta\n"
+        f"🧠 Viktorina XP balingiz: {user.get('xp', 0)} XP\n"
+        f"🔥 Chek-in ketma-ketligi: {user.get('streak_count', 0)} kun\n"
+        f"🎁 Taklif qilgan do'stlaringiz: {user.get('referral_count', 0)} ta\n"
+        f"💰 Bonus balans: {som_format(user.get('balance', 0))}\n"
+        f"📅 Botga qo'shilgan sana: {user.get('joined_date','-')}"
+    )
+    bot.send_message(uid, matn, parse_mode="Markdown")
+
+
+# ============================================================
 #  💼 ISH VA XIZMATLAR BO'LIMI (hub)
 # ============================================================
 @bot.message_handler(func=lambda m: m.text == "💼 Ish va Xizmatlar")
@@ -1873,8 +2288,80 @@ def hub_ish(message):
         types.InlineKeyboardButton("📝 Imtixonga ariza berish", callback_data="hub_imtixon"),
         types.InlineKeyboardButton("🎓 Natijani bilish", callback_data="hub_natija"),
         types.InlineKeyboardButton("📋 Ruxsatnomani yuklash", callback_data="hub_ruxsatnoma"),
+        types.InlineKeyboardButton("🚗 Hamrohlik taksi (Poputka)", callback_data="hub_poputka"),
+        types.InlineKeyboardButton("🔎 Yo'qolgan/Topilgan", callback_data="hub_topilma"),
     )
     bot.send_message(uid, "💼 **Ish va Xizmatlar bo'limi:**", parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_poputka")
+def hub_poputka(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🔍 Mavjud yo'nalishlarni ko'rish", callback_data="poputka_korish"),
+        types.InlineKeyboardButton("➕ Yo'nalish e'lon qilish", callback_data="poputka_elon"),
+    )
+    bot.send_message(uid, "🚗 **Hamrohlik taksi (Poputka):**\n\nYo'lni bo'lishib, yo'l haqini tejang!",
+                     parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "poputka_korish")
+def poputka_korish(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    eid_list = faol_elonlar_royxati(kategoriya_kod="poputka")
+    elonni_yuborish(uid, eid_list, 0)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "poputka_elon")
+def poputka_elon_start(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    if check_sub(uid) is False:
+        send_sub_message(uid)
+        return
+    user_data_temp[uid] = {"is_vip": False, "kategoriya": "🚗 Hamrohlik taksi", "kategoriya_kod": "poputka",
+                           "hudud": "Kiritilmagan", "tuman": "Kiritilmagan", "location": None}
+    user_state[uid] = "elon_sarlavha"
+    bot.send_message(uid, "✍️ **Yo'nalishni yozing** (masalan: 'Toshkent — Samarqand, bugun soat 14:00, 2 o'rin bor'):",
+                     parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_topilma")
+def hub_topilma(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🔍 E'lonlarni ko'rish", callback_data="topilma_korish"),
+        types.InlineKeyboardButton("➕ E'lon berish", callback_data="topilma_elon"),
+    )
+    bot.send_message(uid, "🔎 **Yo'qolgan/Topilgan buyumlar:**\n\nHujjat, kalit, hamyon, uy hayvoni va h.k.",
+                     parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "topilma_korish")
+def topilma_korish(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    eid_list = faol_elonlar_royxati(kategoriya_kod="topilma")
+    elonni_yuborish(uid, eid_list, 0)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "topilma_elon")
+def topilma_elon_start(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    if check_sub(uid) is False:
+        send_sub_message(uid)
+        return
+    user_data_temp[uid] = {"is_vip": False, "kategoriya": "🔎 Yo'qolgan/Topilgan", "kategoriya_kod": "topilma",
+                           "hudud": "Kiritilmagan", "tuman": "Kiritilmagan", "location": None}
+    user_state[uid] = "elon_sarlavha"
+    bot.send_message(uid, "✍️ **Nima yo'qolgan/topilgan? Qisqacha yozing** (masalan: 'Yunusobodda hujjat topildi'):",
+                     parse_mode="Markdown")
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "hub_imtixon")
@@ -2029,9 +2516,15 @@ def hub_bonuslar(call):
 def hub_aksiyalar(call):
     uid = call.from_user.id
     bot.answer_callback_query(call.id)
-    matn = "🎯 **Hozirda faol aksiya (promo) kodlar:**\n\n" + "\n".join(
-        f"• `{kod}` — {som_format(summa)} bonus" for kod, summa in PROMO_KODLAR.items()
-    ) + "\n\n👉 Kodni faollashtirish uchun 💰 Pul va Premium → 🎁 Promo kod bo'limiga o'ting."
+    qatorlar = []
+    for kod, promo in PROMO_KODLAR.items():
+        qator = f"• `{kod}` — {som_format(promo['miqdor'])} bonus"
+        if promo.get("limit") is not None:
+            qolgan = max(0, promo["limit"] - promo_ishlatish_sonini_ol(kod))
+            qator += f" (faqat birinchi {promo['limit']} kishi uchun, {qolgan} ta o'rin qoldi)"
+        qatorlar.append(qator)
+    matn = "🎯 **Hozirda faol aksiya (promo) kodlar:**\n\n" + "\n".join(qatorlar) + \
+        "\n\n👉 Kodni faollashtirish uchun 💰 Pul va Premium → 🎁 Promo kod bo'limiga o'ting."
     bot.send_message(uid, matn, parse_mode="Markdown")
 
 
@@ -2819,6 +3312,17 @@ def elonimni_tahrirlash_start(call):
 
 
 @bot.message_handler(func=lambda m: user_state.get(m.from_user.id) == "elon_narx_tahrirlash")
+def _narxdan_son_ajratish(narx_matni):
+    """'500 y.u.e' yoki '3 000 000 so'm' kabi matndan raqamli qiymatni ajratib olishga urinadi."""
+    raqamlar = "".join(ch if ch.isdigit() else " " for ch in str(narx_matni)).split()
+    if not raqamlar:
+        return None
+    try:
+        return int("".join(raqamlar))
+    except ValueError:
+        return None
+
+
 def elonimni_tahrirlash_yakun(message):
     uid = message.from_user.id
     eid = user_data_temp.get(uid, {}).get("tahrir_eid")
@@ -2835,11 +3339,29 @@ def elonimni_tahrirlash_yakun(message):
         bot.send_message(uid, "❌ E'lon topilmadi.", reply_markup=get_main_keyboard(uid))
         return
 
+    eski_narx = elon.get("narx")
     elon["narx"] = message.text
     elonlar[eid] = elon
     save_elonlar(elonlar)
 
     bot.send_message(uid, f"✅ Narx yangilandi: {message.text}", reply_markup=get_main_keyboard(uid))
+
+    # 🎯 Aqlli narx tushishi bildirishnomasi — bu e'lonni sevimlilarga saqlaganlarga xabar beramiz
+    eski_son = _narxdan_son_ajratish(eski_narx)
+    yangi_son = _narxdan_son_ajratish(message.text)
+    if eski_son is not None and yangi_son is not None and yangi_son < eski_son:
+        db = load_db()
+        for uid_str, u in db.items():
+            if eid in u.get("sevimlilar", []) and u.get("bildirishnoma", True):
+                try:
+                    bot.send_message(
+                        int(uid_str),
+                        f"🎯 **Narx tushdi!**\n\nSiz kuzatayotgan «{md_escape(elon.get('sarlavha',''))}» "
+                        f"e'loni narxi {md_escape(eski_narx)} dan {md_escape(message.text)} ga tushdi!",
+                        parse_mode="Markdown"
+                    )
+                except Exception as e:
+                    log.warning(f"Narx tushishi xabari yuborilmadi ({uid_str}): {e}")
 
     if elon.get("kanal_msg_id"):
         try:
@@ -3478,6 +4000,12 @@ def taksi_safar_yakunlash(call):
                 "izoh": f"Cashback (safar №{tid})"
             })
             update_user(buyurtma["yolovchi_id"], yolovchi)
+
+    # 📊 Shaxsiy statistika uchun: bosib o'tilgan masofani hisoblab boramiz
+    if buyurtma.get("masofa_km"):
+        yolovchi2 = get_user(buyurtma["yolovchi_id"])
+        yolovchi2["taksi_km_jami"] = yolovchi2.get("taksi_km_jami", 0) + buyurtma["masofa_km"]
+        update_user(buyurtma["yolovchi_id"], yolovchi2)
 
     bot.send_message(hid, f"🏁 Safar №{tid} yakunlandi. Rahmat!")
     try:
