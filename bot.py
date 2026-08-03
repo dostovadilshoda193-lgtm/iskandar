@@ -43,7 +43,7 @@ ADMIN_ID = 8548782312
 ADMIN_USERNAME = "dostovv"
 ADMIN_LINK = f"https://t.me/{ADMIN_USERNAME}"
 
-GEMINI_API_KEY = "AQ.Ab8RN6JCiGsBcZAn_3TKVokbrgEcxqYZA6w1bc8J61njczG84A"
+GEMINI_API_KEY = "FAKE_YOU"
 ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 if not ai_client:
     log.warning("GEMINI_API_KEY yo'q — Gemini AI bo'limi ishlamaydi.")
