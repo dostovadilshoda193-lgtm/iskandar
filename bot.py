@@ -40,10 +40,8 @@ ADMIN_ID = 8548782312
 ADMIN_USERNAME = "dostovv"
 ADMIN_LINK = f"https://t.me/{ADMIN_USERNAME}"
 
-GEMINI_API_KEY = "AQ.Ab8RN6JGgFGg5OW0NgV7rEpJbk0k8-uI_E9I0FvnQxgxQ0PLPQ"
-ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
-if not ai_client:
-    log.warning("GEMINI_API_KEY yo'q — Gemini AI bo'limi ishlamaydi.")
+
+
 
 GURUH_LINK = "https://t.me/+sqdu-Tik3Q4wMmIy"
 KANAL_ID = -1004302760890
