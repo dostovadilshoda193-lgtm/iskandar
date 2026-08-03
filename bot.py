@@ -8,6 +8,7 @@ import threading
 import logging
 from datetime import datetime, timedelta
 
+# Tashqi kutubxonalar (pip orqali o'rnatiladiganlar)
 import requests
 import telebot
 from telebot import types
