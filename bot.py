@@ -34,7 +34,7 @@ log = logging.getLogger("bot")
 # ============================================================
 # ⚠️ ESLATMA: bu tokenlarni ENDI ALMASHTIRING (BotFather /revoke va Gemini
 # konsolida yangi kalit) — eski qiymatlar ochiq suhbatda ko'rilgan.
-BOT_TOKEN = ""
+BOT_TOKEN = "8933589522:AAGOVM9KkV-2fBwZQ8pVMykAcN0BqPPkehc"
 
 ADMIN_ID = 8548782312
 ADMIN_USERNAME = "dostovv"
@@ -45,8 +45,6 @@ ai_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 if not ai_client:
     log.warning("GEMINI_API_KEY yo'q — Gemini AI bo'limi ishlamaydi.")
  
-GURUH_LINK = "https://t.me/+sqdu-Tik3Q4wMmIy"
-KANAL_ID = -1004302760890
 
 
 
