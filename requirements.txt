@@ -1,5 +1,5 @@
-requests
 pyTelegramBotAPI
+requests
 google-genai
-fpdf
-python-dotenv
+fpdf2
+flask
