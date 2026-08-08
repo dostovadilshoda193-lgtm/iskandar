@@ -3260,6 +3260,7 @@ def elonni_yuborish(uid, eid_list, index, message_id=None):
     matn = elon_matni(eid, elon, tolik=True)
     matn += f"\n👀 Ko'rishlar: {elon.get('korishlar', 0)}"
     matn += f"\n❤️ Layklar: {len(elon.get('layklar', []))}"
+    matn += f"\n💬 Izohlar: {len(elon.get('izohlar', []))}"
     matn += f"\n📄 {index + 1}/{len(eid_list)}"
 
     layk_matni = "💔 Layk olish" if uid in elon.get("layklar", []) else "❤️ Layk"
@@ -3269,7 +3270,11 @@ def elonni_yuborish(uid, eid_list, index, message_id=None):
         types.InlineKeyboardButton("💾 Saqlash", callback_data=f"fav_{eid}"),
         types.InlineKeyboardButton("➡️", callback_data="browse_next"),
     )
-    nav.add(types.InlineKeyboardButton(f"{layk_matni} ({len(elon.get('layklar', []))})", callback_data=f"layk_{eid}"))
+    nav.add(
+        types.InlineKeyboardButton(f"{layk_matni} ({len(elon.get('layklar', []))})", callback_data=f"layk_{eid}"),
+        types.InlineKeyboardButton(f"💬 Izohlar ({len(elon.get('izohlar', []))})", callback_data=f"izohkor_{eid}"),
+    )
+    nav.add(types.InlineKeyboardButton("✍️ Izoh yozish", callback_data=f"izohyoz_{eid}"))
     if elon.get("user_id") != uid:
         nav.add(types.InlineKeyboardButton("✉️ Sotuvchiga yozish", callback_data=f"msgowner_{eid}"))
     nav.add(types.InlineKeyboardButton("🚩 Shikoyat", callback_data=f"report_{eid}"))
@@ -3448,7 +3453,11 @@ def elon_layk_bosish(call):
         types.InlineKeyboardButton("💾 Saqlash", callback_data=f"fav_{eid}"),
         types.InlineKeyboardButton("➡️", callback_data="browse_next"),
     )
-    nav.add(types.InlineKeyboardButton(f"{layk_matni} ({len(layklar)})", callback_data=f"layk_{eid}"))
+    nav.add(
+        types.InlineKeyboardButton(f"{layk_matni} ({len(layklar)})", callback_data=f"layk_{eid}"),
+        types.InlineKeyboardButton(f"💬 Izohlar ({len(elon.get('izohlar', []))})", callback_data=f"izohkor_{eid}"),
+    )
+    nav.add(types.InlineKeyboardButton("✍️ Izoh yozish", callback_data=f"izohyoz_{eid}"))
     if elon.get("user_id") != uid:
         nav.add(types.InlineKeyboardButton("✉️ Sotuvchiga yozish", callback_data=f"msgowner_{eid}"))
     nav.add(types.InlineKeyboardButton("🚩 Shikoyat", callback_data=f"report_{eid}"))
@@ -3456,6 +3465,89 @@ def elon_layk_bosish(call):
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=nav)
     except Exception:
         pass
+
+
+# ============================================================
+#  💬 IZOHLAR (KOMMENTARIYALAR) TIZIMI
+# ============================================================
+@bot.callback_query_handler(func=lambda call: call.data.startswith("izohkor_"))
+def izohlarni_korish(call):
+    uid = call.from_user.id
+    eid = call.data.replace("izohkor_", "")
+    bot.answer_callback_query(call.id)
+    elon = load_elonlar().get(eid)
+    if not elon:
+        bot.send_message(uid, "⚠️ E'lon topilmadi.")
+        return
+    izohlar = elon.get("izohlar", [])
+    if not izohlar:
+        bot.send_message(uid, "💬 Bu e'lon ostida hali izoh yo'q. Birinchi bo'lib izoh qoldiring!")
+        return
+    matn = f"💬 **Izohlar ({len(izohlar)} ta):**\n\n" + "\n\n".join(
+        f"👤 {md_escape(iz.get('ism','Foydalanuvchi'))} ({iz.get('sana','')}):\n{md_escape(iz.get('matn',''))}"
+        for iz in izohlar[-15:]
+    )
+    bot.send_message(uid, matn, parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("izohyoz_"))
+def izoh_yozish_start(call):
+    uid = call.from_user.id
+    eid = call.data.replace("izohyoz_", "")
+    bot.answer_callback_query(call.id)
+    elon = load_elonlar().get(eid)
+    if not elon:
+        bot.send_message(uid, "⚠️ E'lon topilmadi.")
+        return
+    user_state[uid] = f"izoh_yozish_{eid}"
+    bot.send_message(uid, "✍️ Izohingizni yozing (yoki /bekor — bekor qilish uchun):")
+
+
+@bot.message_handler(func=lambda m: str(user_state.get(m.from_user.id, "")).startswith("izoh_yozish_"))
+def izoh_yozish_yakun(message):
+    uid = message.from_user.id
+    holat = user_state.pop(uid)
+    eid = holat.replace("izoh_yozish_", "")
+
+    if message.text and message.text.strip() == "/bekor":
+        bot.send_message(uid, "❌ Bekor qilindi.", reply_markup=get_main_keyboard(uid))
+        return
+
+    matn = matnda_taqiqlangan_soz_bormi(message.text) if message.text else False
+    if matn:
+        bot.send_message(uid, "🚫 Izohingizda taqiqlangan so'z aniqlandi. Iltimos, boshqacha yozing.",
+                         reply_markup=get_main_keyboard(uid))
+        return
+
+    elonlar = load_elonlar()
+    elon = elonlar.get(eid)
+    if not elon:
+        bot.send_message(uid, "⚠️ E'lon topilmadi.", reply_markup=get_main_keyboard(uid))
+        return
+
+    user = get_user(uid)
+    izoh_obj = {
+        "id": len(elon.get("izohlar", [])) + 1,
+        "uid": uid,
+        "ism": user.get("name") or "Foydalanuvchi",
+        "matn": message.text.strip()[:500],
+        "sana": datetime.now().strftime("%d.%m.%Y %H:%M"),
+    }
+    elon.setdefault("izohlar", []).append(izoh_obj)
+    elonlar[eid] = elon
+    save_elonlar(elonlar)
+
+    bot.send_message(uid, "✅ Izohingiz qo'shildi, rahmat!", reply_markup=get_main_keyboard(uid))
+
+    egasi = elon.get("user_id")
+    if egasi and egasi != uid:
+        try:
+            bot.send_message(egasi, f"💬 E'loningizga yangi izoh qoldirishdi:\n\n"
+                                    f"👤 {md_escape(izoh_obj['ism'])}: {md_escape(izoh_obj['matn'])}")
+        except Exception:
+            pass
+
+
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("report_"))
@@ -5555,6 +5647,7 @@ def elon_yakuniy_qaror(call):
         "egasi_ism": user["name"],
         "egasi_username": user["tg_username"],
         "layklar": [],
+        "izohlar": [],
     }
     elon_qoshish(eid, elon_obj)
     yangi_elon_bildirishnoma_yubor(eid, elon_obj)
