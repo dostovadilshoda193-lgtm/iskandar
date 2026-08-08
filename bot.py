@@ -90,6 +90,12 @@ PAYMENT_WEBHOOK_PORT = int(os.environ.get("PAYMENT_WEBHOOK_PORT", "8080"))
 TOLOV_FILE = "tolovlar.json"
 PAYME_TRANZAKSIYA_FILE = "payme_tranzaksiyalar.json"
 
+# ============================================================
+#  🎁 REFERRAL BONUS SOZLAMALARI
+# ============================================================
+REFERRAL_BONUS_TAKLIFCHI = 2000   # taklif qilgan foydalanuvchiga beriladigan bonus (so'm)
+REFERRAL_BONUS_YANGI = 1000       # taklif orqali qo'shilgan yangi foydalanuvchiga "xush kelibsiz" bonusi
+
 TAKSI_BOSHLANGICH_NARX = 5000
 TAKSI_KM_NARXI = 2000
 TAKSI_QIDIRUV_RADIUSI_KM = 15
@@ -2713,17 +2719,156 @@ def hub_admin_panel(message):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("📈 Statistika", callback_data="hub_admin_stat"),
+        types.InlineKeyboardButton("👥 Foydalanuvchilar", callback_data="hub_admin_users"),
+        types.InlineKeyboardButton("📢 E'lonlar", callback_data="hub_admin_elonlar"),
+        types.InlineKeyboardButton("🚕 Taksi", callback_data="hub_admin_taksi"),
+        types.InlineKeyboardButton("💎 Premium", callback_data="hub_admin_premium"),
+        types.InlineKeyboardButton("💰 To'lovlar", callback_data="hub_admin_tolovlar"),
+        types.InlineKeyboardButton("🚫 Blacklist", callback_data="hub_admin_blacklist"),
+        types.InlineKeyboardButton("📥 CSV / Excel", callback_data="hub_admin_export"),
         types.InlineKeyboardButton("📢 Reklama yuborish", callback_data="hub_admin_broadcast"),
         types.InlineKeyboardButton("📂 Backup", callback_data="hub_admin_backup"),
         types.InlineKeyboardButton("📝 Loglar", callback_data="hub_admin_loglar"),
-        types.InlineKeyboardButton("💰 To'lovlar", callback_data="hub_admin_tolovlar"),
     )
     bot.send_message(
         ADMIN_ID,
-        "🛠 **Admin panel**\n\nQo'shimcha buyruqlar uchun /admin yozing "
-        "(foydalanuvchi qidirish, ban/unban, premium berish va h.k.)",
+        "🛠 **Admin panel**\n\nKerakli bo'limni tanlang:",
         parse_mode="Markdown", reply_markup=markup
     )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_users" and call.from_user.id == ADMIN_ID)
+def hub_admin_users(call):
+    bot.answer_callback_query(call.id)
+    db = load_db()
+    bugun = datetime.now().strftime("%d.%m.%Y")
+    bugun_qoshilgan = sum(1 for u in db.values() if u.get("joined_date") == bugun)
+    premium_soni = sum(1 for u in db.values() if u.get("premium"))
+    banned_soni = sum(1 for u in db.values() if u.get("is_banned"))
+    matn = (
+        f"👥 **Foydalanuvchilar**\n\n"
+        f"• Jami: {len(db)} ta\n"
+        f"• Bugun qo'shilgan: {bugun_qoshilgan} ta\n"
+        f"• 💎 Premium: {premium_soni} ta\n"
+        f"• 🚫 Bloklangan: {banned_soni} ta\n\n"
+        f"🔎 Aniq foydalanuvchini ko'rish uchun ID yoki @username yuboring:"
+    )
+    user_state[ADMIN_ID] = "admin_user_qidirish"
+    bot.send_message(ADMIN_ID, matn, parse_mode="Markdown")
+
+
+@bot.message_handler(func=lambda m: user_state.get(m.from_user.id) == "admin_user_qidirish" and m.from_user.id == ADMIN_ID)
+def hub_admin_user_qidirish_natija(message):
+    user_state.pop(ADMIN_ID, None)
+    qidiruv = message.text.strip()
+    db = load_db()
+    if qidiruv.startswith("@"):
+        topilgan = next((k for k, u in db.items() if u.get("tg_username", "").lower() == qidiruv.lower()), None)
+        if not topilgan:
+            bot.reply_to(message, "❌ Bunday username bilan foydalanuvchi topilmadi.")
+            return
+        uid_str, user = topilgan, db[topilgan]
+    else:
+        uid_str = qidiruv
+        user = db.get(uid_str)
+        if not user:
+            bot.reply_to(message, "❌ Bunday ID bilan foydalanuvchi topilmadi.")
+            return
+    xavfsiz_yuborish(ADMIN_ID, _foydalanuvchi_profil_matni(uid_str, user),
+                     reply_markup=_profil_boshqaruv_markup(uid_str, user))
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_elonlar" and call.from_user.id == ADMIN_ID)
+def hub_admin_elonlar(call):
+    bot.answer_callback_query(call.id)
+    elonlar = load_elonlar()
+    faol_soni = sum(1 for e in elonlar.values() if elon_faolmi(e))
+    vip_soni = sum(1 for e in elonlar.values() if elon_faolmi(e) and e.get("is_vip"))
+    matn = (
+        f"📢 **E'lonlar**\n\n"
+        f"• Jami: {len(elonlar)} ta\n"
+        f"• Faol: {faol_soni} ta\n"
+        f"• 🔥 VIP: {vip_soni} ta\n\n"
+        f"🔎 Aniq e'lonni ko'rish/o'chirish uchun e'lon ID raqamini yuboring:"
+    )
+    user_state[ADMIN_ID] = "admin_elon_qidirish"
+    bot.send_message(ADMIN_ID, matn, parse_mode="Markdown")
+
+
+@bot.message_handler(func=lambda m: user_state.get(m.from_user.id) == "admin_elon_qidirish" and m.from_user.id == ADMIN_ID)
+def hub_admin_elon_qidirish_natija(message):
+    user_state.pop(ADMIN_ID, None)
+    eid = "".join(ch for ch in message.text if ch.isdigit())
+    admin_elonni_kor(FakeMessage(ADMIN_ID, f"/elon_{eid}"))
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_taksi" and call.from_user.id == ADMIN_ID)
+def hub_admin_taksi(call):
+    bot.answer_callback_query(call.id)
+    taksilar = load_taksi()
+    haydovchilar = load_haydovchilar()
+    taksi_yakunlangan = sum(1 for t in taksilar.values() if t.get("holat") == "yakunlandi")
+    taksi_kutilmoqda = sum(1 for t in taksilar.values() if t.get("holat") == "kutilmoqda")
+    tasdiqlangan = sum(1 for h in haydovchilar.values() if h.get("holat") == "tasdiqlangan")
+    onlayn = sum(1 for h in haydovchilar.values() if h.get("holat") == "tasdiqlangan" and h.get("online"))
+    kutilmoqda_h = sum(1 for h in haydovchilar.values() if h.get("holat") == "kutilmoqda")
+    matn = (
+        f"🚕 **Taksi**\n\n"
+        f"• Jami buyurtmalar: {len(taksilar)} ta\n"
+        f"• Kutilmoqda: {taksi_kutilmoqda} ta\n"
+        f"• Yakunlangan: {taksi_yakunlangan} ta\n\n"
+        f"👨‍✈️ **Haydovchilar**\n"
+        f"• Tasdiqlangan: {tasdiqlangan} ta ({onlayn} onlayn)\n"
+        f"• Tasdiqlanishi kutilayotgan arizalar: {kutilmoqda_h} ta\n\n"
+        f"📜 Batafsil ro'yxat uchun /haydovchilar_top buyrug'ini yuboring."
+    )
+    bot.send_message(ADMIN_ID, matn, parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_premium" and call.from_user.id == ADMIN_ID)
+def hub_admin_premium(call):
+    bot.answer_callback_query(call.id)
+    db = load_db()
+    premium_royxat = [(uid_str, u) for uid_str, u in db.items() if u.get("premium")]
+    matn = f"💎 **Premium foydalanuvchilar: {len(premium_royxat)} ta**\n\n"
+    matn += "\n".join(
+        f"• {md_escape(u.get('name','?'))} (`{uid_str}`)" for uid_str, u in premium_royxat[:20]
+    ) if premium_royxat else "Hozircha Premium foydalanuvchi yo'q."
+    matn += ("\n\nℹ️ Berish/olib tashlash: 👥 Foydalanuvchilar bo'limidan ID orqali qidiring, "
+             "u yerda tugmalar bilan boshqarasiz.")
+    bot.send_message(ADMIN_ID, matn, parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_blacklist" and call.from_user.id == ADMIN_ID)
+def hub_admin_blacklist(call):
+    bot.answer_callback_query(call.id)
+    sozlar = load_blacklist()
+    matn = "🚫 **Taqiqlangan so'zlar:**\n\n" + (", ".join(sozlar) if sozlar else "Ro'yxat bo'sh.")
+    matn += "\n\n➕ Qo'shish: `/addword so'z`\n➖ Olib tashlash: `/delword so'z`"
+    bot.send_message(ADMIN_ID, matn, parse_mode="Markdown")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_export" and call.from_user.id == ADMIN_ID)
+def hub_admin_export(call):
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(
+        types.InlineKeyboardButton("👥 Foydalanuvchilar CSV", callback_data="hub_admin_export_users"),
+        types.InlineKeyboardButton("🚕 Haydovchilar CSV", callback_data="hub_admin_export_haydovchi"),
+    )
+    bot.send_message(ADMIN_ID, "📥 Qaysi ma'lumotni CSV/Excel qilib eksport qilamiz?", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_export_users" and call.from_user.id == ADMIN_ID)
+def hub_admin_export_users_cb(call):
+    bot.answer_callback_query(call.id)
+    admin_export_users(FakeMessage(ADMIN_ID, "/export"))
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_admin_export_haydovchi" and call.from_user.id == ADMIN_ID)
+def hub_admin_export_haydovchi_cb(call):
+    bot.answer_callback_query(call.id)
+    admin_export_haydovchilar(FakeMessage(ADMIN_ID, "/export_haydovchi"))
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "hub_admin_stat" and call.from_user.id == ADMIN_ID)
@@ -2803,9 +2948,30 @@ def start(message):
             if taklifchi_id != uid:
                 taklifchi = get_user(taklifchi_id)
                 user["referred_by"] = taklifchi_id
+
+                # 🎁 Yangi qo'shilgan foydalanuvchiga "xush kelibsiz" bonusi
+                if REFERRAL_BONUS_YANGI > 0:
+                    user["balance"] = user.get("balance", 0) + REFERRAL_BONUS_YANGI
+                    user.setdefault("balance_tarix", []).append({
+                        "sana": datetime.now().strftime("%d.%m.%Y %H:%M"),
+                        "miqdor": REFERRAL_BONUS_YANGI, "izoh": "Referal orqali qo'shilish bonusi"
+                    })
                 update_user(uid, user)
+
+                # 🎁 Taklif qilgan foydalanuvchiga bonus
                 taklifchi["referral_count"] = taklifchi.get("referral_count", 0) + 1
                 yangi_soni = taklifchi["referral_count"]
+                if REFERRAL_BONUS_TAKLIFCHI > 0:
+                    taklifchi["balance"] = taklifchi.get("balance", 0) + REFERRAL_BONUS_TAKLIFCHI
+                    taklifchi.setdefault("balance_tarix", []).append({
+                        "sana": datetime.now().strftime("%d.%m.%Y %H:%M"),
+                        "miqdor": REFERRAL_BONUS_TAKLIFCHI, "izoh": f"Referal bonusi ({user.get('name') or uid} taklif qilingani uchun)"
+                    })
+                    try:
+                        bot.send_message(taklifchi_id, f"🎁 Sizning referal havolangiz orqali yangi foydalanuvchi qo'shildi!\n"
+                                                        f"💰 Hisobingizga {som_format(REFERRAL_BONUS_TAKLIFCHI)} bonus qo'shildi.")
+                    except Exception as e:
+                        log.warning(f"Referal bonus xabari yuborilmadi: {e}")
                 if yangi_soni > 0 and yangi_soni % 5 == 0 and not taklifchi.get("premium"):
                     taklifchi["premium"] = True
                     try:
@@ -3019,14 +3185,17 @@ def elonni_yuborish(uid, eid_list, index, message_id=None):
 
     matn = elon_matni(eid, elon, tolik=True)
     matn += f"\n👀 Ko'rishlar: {elon.get('korishlar', 0)}"
+    matn += f"\n❤️ Layklar: {len(elon.get('layklar', []))}"
     matn += f"\n📄 {index + 1}/{len(eid_list)}"
 
+    layk_matni = "💔 Layk olish" if uid in elon.get("layklar", []) else "❤️ Layk"
     nav = types.InlineKeyboardMarkup(row_width=3)
     nav.add(
         types.InlineKeyboardButton("⬅️", callback_data="browse_prev"),
-        types.InlineKeyboardButton("❤️ Saqlash", callback_data=f"fav_{eid}"),
+        types.InlineKeyboardButton("💾 Saqlash", callback_data=f"fav_{eid}"),
         types.InlineKeyboardButton("➡️", callback_data="browse_next"),
     )
+    nav.add(types.InlineKeyboardButton(f"{layk_matni} ({len(elon.get('layklar', []))})", callback_data=f"layk_{eid}"))
     if elon.get("user_id") != uid:
         nav.add(types.InlineKeyboardButton("✉️ Sotuvchiga yozish", callback_data=f"msgowner_{eid}"))
     nav.add(types.InlineKeyboardButton("🚩 Shikoyat", callback_data=f"report_{eid}"))
@@ -3110,6 +3279,54 @@ def elon_saqlash(call):
     user["sevimlilar"].append(eid)
     update_user(uid, user)
     bot.answer_callback_query(call.id, "❤️ Sevimlilarga qo'shildi!")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("layk_"))
+def elon_layk_bosish(call):
+    """E'longa layk bosish/olish — har bir foydalanuvchi bitta e'longa
+    faqat bitta marta layk bosa oladi (qayta bossa — layk qaytarib olinadi)."""
+    uid = call.from_user.id
+    eid = call.data.replace("layk_", "")
+    elonlar = load_elonlar()
+    elon = elonlar.get(eid)
+    if not elon:
+        bot.answer_callback_query(call.id, "⚠️ E'lon topilmadi yoki o'chirilgan.")
+        return
+
+    layklar = elon.setdefault("layklar", [])
+    if uid in layklar:
+        layklar.remove(uid)
+        bot.answer_callback_query(call.id, "💔 Layk olindi.")
+    else:
+        layklar.append(uid)
+        bot.answer_callback_query(call.id, "❤️ Layk bosildi!")
+        egasi = elon.get("user_id")
+        if egasi and egasi != uid:
+            try:
+                bot.send_message(egasi, f"❤️ Sizning e'loningizga layk bosishdi!\n"
+                                        f"Jami layklar: {len(layklar)} ta")
+            except Exception:
+                pass
+
+    elonlar[eid] = elon
+    save_elonlar(elonlar)
+
+    # Xabar/rasm ostidagi tugmalarni yangilangan layk soni bilan qayta chizamiz
+    layk_matni = "💔 Layk olish" if uid in layklar else "❤️ Layk"
+    nav = types.InlineKeyboardMarkup(row_width=3)
+    nav.add(
+        types.InlineKeyboardButton("⬅️", callback_data="browse_prev"),
+        types.InlineKeyboardButton("💾 Saqlash", callback_data=f"fav_{eid}"),
+        types.InlineKeyboardButton("➡️", callback_data="browse_next"),
+    )
+    nav.add(types.InlineKeyboardButton(f"{layk_matni} ({len(layklar)})", callback_data=f"layk_{eid}"))
+    if elon.get("user_id") != uid:
+        nav.add(types.InlineKeyboardButton("✉️ Sotuvchiga yozish", callback_data=f"msgowner_{eid}"))
+    nav.add(types.InlineKeyboardButton("🚩 Shikoyat", callback_data=f"report_{eid}"))
+    try:
+        bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=nav)
+    except Exception:
+        pass
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("report_"))
@@ -5208,6 +5425,7 @@ def elon_yakuniy_qaror(call):
         "created_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
         "egasi_ism": user["name"],
         "egasi_username": user["tg_username"],
+        "layklar": [],
     }
     elon_qoshish(eid, elon_obj)
 
