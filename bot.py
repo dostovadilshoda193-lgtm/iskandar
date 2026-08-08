@@ -89,6 +89,7 @@ PAYMENT_WEBHOOK_PORT = int(os.environ.get("PAYMENT_WEBHOOK_PORT", "8080"))
 
 TOLOV_FILE = "tolovlar.json"
 PAYME_TRANZAKSIYA_FILE = "payme_tranzaksiyalar.json"
+BILDIRISHNOMA_QIDIRUV_FILE = "saqlangan_qidiruvlar.json"
 
 # ============================================================
 #  🎁 REFERRAL BONUS SOZLAMALARI
@@ -757,6 +758,78 @@ def uzum_link_yarat(tid, summa):
         return None
     # TODO: Uzum Bank texnik hujjatiga ko'ra to'g'ri so'rov/imzo qo'shing.
     return f"{UZUM_API_URL}?merchant_id={UZUM_MERCHANT_ID}&order_id={tid}&amount={int(summa)}"
+
+
+# ============================================================
+#  🔔 SMART BILDIRISHNOMA — SAQLANGAN QIDIRUVLAR
+# ============================================================
+def load_saqlangan_qidiruvlar():
+    return _load_json(BILDIRISHNOMA_QIDIRUV_FILE)
+
+
+def save_saqlangan_qidiruvlar(data):
+    _save_json(BILDIRISHNOMA_QIDIRUV_FILE, data)
+
+
+def yangi_qidiruv_id():
+    q = load_saqlangan_qidiruvlar()
+    if not q:
+        return "1"
+    return str(max(int(k) for k in q.keys()) + 1)
+
+
+def qidiruv_royxatga_qoshish(uid, kalit_soz):
+    """Foydalanuvchi qidiruvini saqlaydi. Xuddi shu so'z bo'yicha
+    ikkinchi marta saqlashga urinsa — eskisini qaytaradi (dublikat yo'q)."""
+    q = load_saqlangan_qidiruvlar()
+    for qid, item in q.items():
+        if item["uid"] == uid and item["kalit_soz"].lower() == kalit_soz.lower():
+            return qid
+    qid = yangi_qidiruv_id()
+    q[qid] = {
+        "uid": uid, "kalit_soz": kalit_soz,
+        "yaratilgan_at": datetime.now().strftime("%d.%m.%Y %H:%M"),
+    }
+    save_saqlangan_qidiruvlar(q)
+    return qid
+
+
+def qidiruvlarim_royxati(uid):
+    q = load_saqlangan_qidiruvlar()
+    return {qid: item for qid, item in q.items() if item["uid"] == uid}
+
+
+def qidiruv_ochirish(qid):
+    q = load_saqlangan_qidiruvlar()
+    if qid in q:
+        del q[qid]
+        save_saqlangan_qidiruvlar(q)
+        return True
+    return False
+
+
+def yangi_elon_bildirishnoma_yubor(eid, elon_obj):
+    """Yangi e'lon joylanganda chaqiriladi — saqlangan qidiruvlarga mos
+    kelsa, tegishli foydalanuvchilarga darhol xabar yuboradi."""
+    q = load_saqlangan_qidiruvlar()
+    if not q:
+        return
+    matn = (elon_obj.get("sarlavha", "") + " " + elon_obj.get("tavsif", "")).lower()
+    yuborilganlar = set()
+    for item in q.values():
+        uid = item["uid"]
+        if uid == elon_obj.get("user_id") or uid in yuborilganlar:
+            continue
+        if item["kalit_soz"].lower() in matn:
+            try:
+                bot.send_message(
+                    uid,
+                    f"🔔 Siz saqlagan \"{item['kalit_soz']}\" qidiruvi bo'yicha yangi e'lon topildi!\n\n"
+                    + elon_matni(eid, elon_obj, tolik=False)
+                )
+                yuborilganlar.add(uid)
+            except Exception as e:
+                log.warning(f"Smart bildirishnoma yuborilmadi ({uid}): {e}")
 
 
 # ============================================================
@@ -2220,6 +2293,7 @@ def hub_profil(message):
         types.InlineKeyboardButton("🏆 Reytingim", callback_data="hub_reyting"),
         types.InlineKeyboardButton("🎁 Do'st taklif qilish", callback_data="hub_referal"),
         types.InlineKeyboardButton("📍 Manzillarim", callback_data="hub_manzillar"),
+        types.InlineKeyboardButton("🔔 Bildirishnomalarim", callback_data="hub_bildirishnomalarim"),
         types.InlineKeyboardButton("🔒 Xavfsizlik", callback_data="hub_xavfsizlik"),
     )
     bot.send_message(uid, "👤 **Profil bo'limi:**", parse_mode="Markdown", reply_markup=markup)
@@ -3247,8 +3321,63 @@ def qidiruv_start(message):
 def qidiruv_natija(message):
     uid = message.from_user.id
     user_state.pop(uid, None)
-    eid_list = faol_elonlar_royxati(qidiruv=message.text)
+    kalit_soz = message.text.strip()
+    eid_list = faol_elonlar_royxati(qidiruv=kalit_soz)
+    user_data_temp.setdefault(uid, {})["oxirgi_qidiruv"] = kalit_soz
     elonni_yuborish(uid, eid_list, 0)
+
+    allaqachon_bor = any(
+        item["kalit_soz"].lower() == kalit_soz.lower() for item in qidiruvlarim_royxati(uid).values()
+    )
+    if not allaqachon_bor:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔔 Shu qidiruvni saqlab, xabar olish", callback_data="qidiruv_saqla_cb"))
+        bot.send_message(
+            uid,
+            f"ℹ️ \"{kalit_soz}\" bo'yicha yangi e'lon chiqqanda avtomatik xabar bersinmi?",
+            reply_markup=markup
+        )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "qidiruv_saqla_cb")
+def qidiruv_saqla_callback(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    kalit_soz = user_data_temp.get(uid, {}).get("oxirgi_qidiruv")
+    if not kalit_soz:
+        bot.send_message(uid, "⚠️ Saqlanadigan qidiruv topilmadi, qaytadan qidiring.")
+        return
+    qidiruv_royxatga_qoshish(uid, kalit_soz)
+    bot.send_message(uid, f"🔔 Saqlandi! \"{kalit_soz}\" bo'yicha yangi e'lon chiqsa, sizga darhol xabar beraman.")
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "hub_bildirishnomalarim")
+def hub_bildirishnomalarim(call):
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id)
+    royxat = qidiruvlarim_royxati(uid)
+    if not royxat:
+        bot.send_message(uid, "🔔 Hozircha saqlangan qidiruvingiz yo'q.\n\n"
+                              "🔎 Qidiruv qilganingizda \"Shu qidiruvni saqlab, xabar olish\" tugmasini bosing.")
+        return
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for qid, item in royxat.items():
+        markup.add(types.InlineKeyboardButton(f"🗑 {item['kalit_soz']}", callback_data=f"bildirishnoma_ochir_{qid}"))
+    bot.send_message(uid, "🔔 **Saqlangan qidiruvlaringiz** (o'chirish uchun bosing):",
+                     parse_mode="Markdown", reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("bildirishnoma_ochir_"))
+def hub_bildirishnoma_ochir(call):
+    uid = call.from_user.id
+    qid = call.data.replace("bildirishnoma_ochir_", "")
+    bot.answer_callback_query(call.id)
+    royxat = qidiruvlarim_royxati(uid)
+    if qid not in royxat:
+        bot.send_message(uid, "⚠️ Topilmadi yoki allaqachon o'chirilgan.")
+        return
+    qidiruv_ochirish(qid)
+    bot.send_message(uid, f"✅ \"{royxat[qid]['kalit_soz']}\" bildirishnomasi o'chirildi.")
 
 
 @bot.callback_query_handler(func=lambda call: call.data in ["browse_next", "browse_prev"])
@@ -5428,6 +5557,7 @@ def elon_yakuniy_qaror(call):
         "layklar": [],
     }
     elon_qoshish(eid, elon_obj)
+    yangi_elon_bildirishnoma_yubor(eid, elon_obj)
 
     user["elonlar"].append(eid)
     user["elon_count"] += 1
