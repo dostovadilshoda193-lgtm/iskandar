@@ -36,7 +36,7 @@ log = logging.getLogger("bot")
 BOT_TOKEN = "8933589522:AAGOVM9KkV-2fBwZQ8pVMykAcN0BqPPkehc"
 
 ADMIN_ID = 8548782312
-ADMIN_USERNAME = "MON1YKING"
+ADMIN_USERNAME = "dostovv"
 ADMIN_LINK = f"https://t.me/{ADMIN_USERNAME}"
 
 GEMINI_API_KEY = "AQ.Ab8RN6JCiGsBcZAn_3TKVokbrgEcxqYZA6w1bc8J61njczG84A"
@@ -5599,11 +5599,50 @@ def elon_tekshirish_bosqichi(uid):
         types.InlineKeyboardButton("✅ Tasdiqlash", callback_data="confirm_elon"),
         types.InlineKeyboardButton("❌ Rad etish", callback_data="cancel_elon")
     )
+    if ai_client:
+        markup.add(types.InlineKeyboardButton("🧪 AI orqali baholash", callback_data="elon_ai_baho"))
 
     if data["photo"]:
         xavfsiz_photo_yuborish(uid, data["photo"], tekshirish_matni, reply_markup=markup)
     else:
         xavfsiz_yuborish(uid, tekshirish_matni, reply_markup=markup, disable_web_page_preview=False)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "elon_ai_baho")
+def elon_ai_baholash(call):
+    """🧪 AI E'lon Baholovchi — Gemini yordamida e'lonni 100 balllik
+    tizimda baholaydi, kuchli/kuchsiz tomonlarini va yaxshilash
+    tavsiyalarini beradi."""
+    uid = call.from_user.id
+    bot.answer_callback_query(call.id, "🧪 AI tekshirmoqda...")
+
+    data = user_data_temp.get(uid)
+    if not data:
+        bot.send_message(uid, "⚠️ E'lon ma'lumotlari topilmadi, qaytadan urinib ko'ring.")
+        return
+    if not ai_client:
+        bot.send_message(uid, "❌ AI hozircha sozlanmagan.")
+        return
+
+    prompt = (
+        "Sen e'lonlar platformasi uchun sifat nazoratchi AI'san. Quyidagi e'lonni "
+        "100 balllik tizimda baho. Faqat O'ZBEK TILIDA, quyidagi qat'iy formatda javob ber "
+        "(hech qanday qo'shimcha izohsiz):\n\n"
+        "⭐ Umumiy baho: N/100\n"
+        "✅ Kuchli tomonlar: ...\n"
+        "❌ Kamchiliklar: ...\n"
+        "🔥 Yaxshilash tavsiyasi: ...\n\n"
+        f"Kategoriya: {data.get('kategoriya')}\n"
+        f"Sarlavha: {data.get('sarlavha')}\n"
+        f"Tavsif: {data.get('tavsif')}\n"
+        f"Narx: {data.get('narx')}\n"
+    )
+    try:
+        response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        bot.send_message(uid, f"🧪 **AI baholash natijasi:**\n\n{response.text}", parse_mode="Markdown")
+    except Exception as e:
+        log.error(f"AI baholash xatoligi: {e}")
+        bot.send_message(uid, "❌ AI baholashda xatolik yuz berdi, birozdan so'ng qayta urinib ko'ring.")
 
 
 @bot.callback_query_handler(func=lambda call: call.data in ["confirm_elon", "cancel_elon"])
