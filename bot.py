@@ -33,7 +33,7 @@ log = logging.getLogger("bot")
 # ============================================================
 # ⚠️ ESLATMA: bu tokenlarni ENDI ALMASHTIRING (BotFather /revoke va Gemini
 # konsolida yangi kalit) — eski qiymatlar ochiq suhbatda ko'rilgan.
-BOT_TOKEN = "f"
+BOT_TOKEN = "8933589522:AAGOVM9KkV-2fBwZQ8pVMykAcN0BqPPkehc"
 
 ADMIN_ID = 8548782312
 ADMIN_USERNAME = "dostovv"
