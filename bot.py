@@ -62,29 +62,18 @@ HAYDOVCHI_FILE = "haydovchilar.json"
 # ============================================================
 #  💳 TO'LOV TIZIMLARI SOZLAMALARI (CLICK / PAYME / UZUM)
 # ============================================================
-# ⚠️ Bu qiymatlarni HECH QACHON kodga yozib qo'ymang — muhit o'zgaruvchisi
-# (environment variable) orqali bering. Har bir tizim uchun o'zining
-# tadbirkorlik (merchant) kabinetidan olinadi:
-#   • Click:  https://merchant.click.uz
-#   • Payme:  https://business.payme.uz
-#   • Uzum:   Uzum Bank / Uzum Nasiya biznes bo'limi orqali so'rov yuboriladi
 CLICK_SERVICE_ID = os.environ.get("CLICK_SERVICE_ID", "")
 CLICK_MERCHANT_ID = os.environ.get("CLICK_MERCHANT_ID", "")
 CLICK_MERCHANT_USER_ID = os.environ.get("CLICK_MERCHANT_USER_ID", "")
 CLICK_SECRET_KEY = os.environ.get("CLICK_SECRET_KEY", "")
 
 PAYME_MERCHANT_ID = os.environ.get("PAYME_MERCHANT_ID", "")
-PAYME_KEY = os.environ.get("PAYME_KEY", "")  # Business kabinetdagi Test yoki Prod kalit
+PAYME_KEY = os.environ.get("PAYME_KEY", "")
 
 UZUM_MERCHANT_ID = os.environ.get("UZUM_MERCHANT_ID", "")
 UZUM_SECRET_KEY = os.environ.get("UZUM_SECRET_KEY", "")
 
-# Click/Payme to'lov tasdiqlash so'rovlarini (webhook) shu server qabul qiladi.
-# Bu — tashqi internetdan ochiq https manzil bo'lishi SHART (masalan, VPS +
-# domen + Nginx/SSL, yoki tunnel xizmati). Http://127.0.0.1 ISHLAMAYDI —
-# Click/Payme serverlari sizning kompyuteringizga emas, ochiq internetga
-# so'rov yuboradi.
-PAYMENT_WEBHOOK_BASE = os.environ.get("PAYMENT_WEBHOOK_BASE", "")  # masalan: https://sizning-domen.uz
+PAYMENT_WEBHOOK_BASE = os.environ.get("PAYMENT_WEBHOOK_BASE", "")
 PAYMENT_WEBHOOK_PORT = int(os.environ.get("PAYMENT_WEBHOOK_PORT", "8080"))
 
 TOLOV_FILE = "tolovlar.json"
@@ -94,8 +83,8 @@ BILDIRISHNOMA_QIDIRUV_FILE = "saqlangan_qidiruvlar.json"
 # ============================================================
 #  🎁 REFERRAL BONUS SOZLAMALARI
 # ============================================================
-REFERRAL_BONUS_TAKLIFCHI = 2000   # taklif qilgan foydalanuvchiga beriladigan bonus (so'm)
-REFERRAL_BONUS_YANGI = 1000       # taklif orqali qo'shilgan yangi foydalanuvchiga "xush kelibsiz" bonusi
+REFERRAL_BONUS_TAKLIFCHI = 2000
+REFERRAL_BONUS_YANGI = 1000
 
 TAKSI_BOSHLANGICH_NARX = 5000
 TAKSI_KM_NARXI = 2000
@@ -251,10 +240,6 @@ user_data_temp = {}
 # ============================================================
 #  MARKDOWN UCHUN XAVFSIZ MATN (foydalanuvchi kiritgan matnni escape qilish)
 # ============================================================
-# Foydalanuvchi tavsif/sarlavha/narx ichiga "*", "_", "[", "`" belgilarini
-# yozib qo'ysa, Telegram "can't parse entities" xatoligi bilan xabarni
-# UMUMAN yubormay qo'yardi (shu sabab e'lon kanalga chiqmay qolgan bo'lishi
-# ehtimoli katta). Endi bunday belgilar avtomatik "escape" qilinadi.
 def md_escape(matn):
     if matn is None:
         return ""
@@ -265,9 +250,6 @@ def md_escape(matn):
 
 
 def xavfsiz_yuborish(chat_id, matn, reply_markup=None, parse_mode="Markdown", **kwargs):
-    """Markdown bilan yuborishga urinadi; agar Telegram parse xatoligi bersa,
-    formatsiz (oddiy matn) qilib qayta yuboradi — shunda xabar HECH BO'LMAGANDA
-    yetib boradi va sabab bot.log'da ko'rinadi."""
     try:
         return bot.send_message(chat_id, matn, parse_mode=parse_mode, reply_markup=reply_markup, **kwargs)
     except Exception as e:
@@ -382,13 +364,12 @@ def yangi_tolov_id():
 
 
 def tolov_yarat(uid, summa, maqsad, izoh=""):
-    """Yangi to'lov buyurtmasi ochadi. maqsad: 'toldirish' | 'premium' | 'vip_elon'."""
     tid = yangi_tolov_id()
     tolovlar = load_tolovlar()
     tolovlar[tid] = {
         "uid": int(uid), "summa": int(summa), "maqsad": maqsad, "izoh": izoh,
-        "status": "kutilmoqda",  # kutilmoqda -> bajarildi / bekor_qilindi
-        "usul": None,            # click / payme / uzum
+        "status": "kutilmoqda",
+        "usul": None,
         "created_at": datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
         "click_trans_id": None,
         "paid_at": None,
@@ -411,10 +392,6 @@ def tolov_yangilash(tid, **kwargs):
 
 
 def tolov_bajarildi(tid, usul=None):
-    """To'lov muvaffaqiyatli yakunlanganda chaqiriladi: balans/VIP/Premium
-    beriladi. Bir necha marta chaqirilsa ham faqat bir marta ishlaydi
-    (status='bajarildi' tekshiruvi orqali) — Click/Payme ba'zan bitta
-    to'lov haqida bir necha marta so'rov yuborishi mumkin."""
     tolov = tolov_topilsin(tid)
     if not tolov or tolov["status"] == "bajarildi":
         return False
@@ -454,8 +431,6 @@ def tolov_bajarildi(tid, usul=None):
             except Exception:
                 pass
         else:
-            # Agar foydalanuvchi to'lov qilib, e'lon jarayonini tark etgan bo'lsa —
-            # bonus balansga pul sifatida qaytariladi, pul yo'qolib qolmasligi uchun.
             user["balance"] = user.get("balance", 0) + summa
             user.setdefault("balance_tarix", []).append({
                 "sana": datetime.now().strftime("%d.%m.%Y %H:%M"),
@@ -497,8 +472,6 @@ CLICK_ERROR_TRANSACTION_CANCELLED = -9
 
 
 def click_link_yarat(tid, summa):
-    """Click Standart (Shop API) to'lov havolasini yasaydi.
-    Foydalanuvchi shu havolaga bosib, Click orqali to'lov qiladi."""
     return (
         "https://my.click.uz/services/pay"
         f"?service_id={CLICK_SERVICE_ID}"
@@ -606,7 +579,6 @@ def save_payme_tranzaksiyalar(data):
 
 
 def payme_link_yarat(tid, summa):
-    """Payme Checkout havolasini yasaydi (summani tiyinda yuboradi)."""
     tiyin = int(summa) * 100
     xom = f"m={PAYME_MERCHANT_ID};ac.order_id={tid};a={tiyin}"
     b64 = base64.b64encode(xom.encode("utf-8")).decode("utf-8")
@@ -650,11 +622,10 @@ def payme_create_transaction(params):
     amount = params.get("amount", 0)
     payme_time = params.get("time")
 
-    payme_check_perform(params)  # order/summa tekshiruvi (xato bo'lsa shu yerda ko'tariladi)
+    payme_check_perform(params)
 
     tranzaksiyalar = load_payme_tranzaksiyalar()
 
-    # Shu order uchun boshqa (eski) tranzaksiya hali "yaratilgan" holatda turgan bo'lsa
     for t_id, t in tranzaksiyalar.items():
         if t["order_id"] == tid and t_id != payme_id and t["state"] == PAYME_TRANS_HOLATI_YARATILDI:
             raise PaymeXato(-31008, {"uz": "Boshqa faol tranzaksiya mavjud", "ru": "Другая транзакция активна", "en": "Another transaction pending"})
@@ -712,7 +683,6 @@ def payme_cancel_transaction(params):
         t["state"] = PAYME_TRANS_HOLATI_BEKOR_YARATILGANDAN_KEYIN
     elif t["state"] == PAYME_TRANS_HOLATI_BAJARILDI:
         t["state"] = PAYME_TRANS_HOLATI_BEKOR_BAJARILGANDAN_KEYIN
-        # Agar bonus balansga qo'shilgan bo'lsa — qaytarib olamiz.
         tolov = tolov_topilsin(t["order_id"])
         if tolov and tolov["status"] == "bajarildi" and tolov["maqsad"] == "toldirish":
             user = get_user(tolov["uid"])
@@ -743,20 +713,12 @@ def payme_check_transaction(params):
 # ============================================================
 #  💳 UZUM PAY — TO'LOV HAVOLASI (QISQA STUB)
 # ============================================================
-# ⚠️ DIQQAT: Click va Payme'dan farqli o'laroq, Uzum Bank'ning tadbirkorlar
-# uchun ochiq/ommaviy hujjatlashtirilgan checkout API'si Click/Payme kabi
-# keng tarqalgan emas — aniq endpoint, so'rov formati va imzolash usuli
-# SIZGA Uzum Bank biznes hamkorlik bo'limi tomonidan shartnoma asosida
-# beriladi. Shu sababli bu yerda faqat TUZILMA (struktura) tayyorlab
-# qo'ydim — UZUM_API_URL va imzolash mantig'ini ular bergan texnik
-# hujjatga qarab to'ldirishingiz kerak bo'ladi.
-UZUM_API_URL = os.environ.get("UZUM_API_URL", "")  # Uzum Bank sizga bergan endpoint
+UZUM_API_URL = os.environ.get("UZUM_API_URL", "")
 
 
 def uzum_link_yarat(tid, summa):
     if not UZUM_API_URL or not UZUM_MERCHANT_ID:
         return None
-    # TODO: Uzum Bank texnik hujjatiga ko'ra to'g'ri so'rov/imzo qo'shing.
     return f"{UZUM_API_URL}?merchant_id={UZUM_MERCHANT_ID}&order_id={tid}&amount={int(summa)}"
 
 
@@ -779,8 +741,6 @@ def yangi_qidiruv_id():
 
 
 def qidiruv_royxatga_qoshish(uid, kalit_soz):
-    """Foydalanuvchi qidiruvini saqlaydi. Xuddi shu so'z bo'yicha
-    ikkinchi marta saqlashga urinsa — eskisini qaytaradi (dublikat yo'q)."""
     q = load_saqlangan_qidiruvlar()
     for qid, item in q.items():
         if item["uid"] == uid and item["kalit_soz"].lower() == kalit_soz.lower():
@@ -809,8 +769,6 @@ def qidiruv_ochirish(qid):
 
 
 def yangi_elon_bildirishnoma_yubor(eid, elon_obj):
-    """Yangi e'lon joylanganda chaqiriladi — saqlangan qidiruvlarga mos
-    kelsa, tegishli foydalanuvchilarga darhol xabar yuboradi."""
     q = load_saqlangan_qidiruvlar()
     if not q:
         return
@@ -1123,7 +1081,7 @@ def event_qoshish(matn):
 
 
 # ============================================================
-#  OBUNA TEKSHIRISH
+#  📢 MAJBURIY KANAL/GURUH TEKSHIRUVI (1 TA KANAL)
 # ============================================================
 def check_sub(user_id):
     if user_id == ADMIN_ID:
@@ -1138,12 +1096,12 @@ def check_sub(user_id):
 
 def send_sub_message(user_id):
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📢 Guruhga a'zo bo'lish", url=GURUH_LINK))
+    markup.add(types.InlineKeyboardButton("📢 Kanalga a'zo bo'lish", url=GURUH_LINK))
     markup.add(types.InlineKeyboardButton("✅ Tekshirish", callback_data="check_subscription"))
     bot.send_message(
         user_id,
-        "👋 Botimizdan foydalanishdan oldin guruhimizga a'zo bo'lishingiz kerak.\n\n"
-        "👉 Guruhga a'zo bo'lib, keyin '✅ Tekshirish' tugmasini bosing!",
+        "👋 Botimizdan foydalanishdan oldin kanalimizga a'zo bo'lishingiz kerak.\n\n"
+        "👉 Kanalga a'zo bo'lib, keyin '✅ Tekshirish' tugmasini bosing!",
         reply_markup=markup
     )
 
@@ -1159,7 +1117,87 @@ def check_sub_callback(call):
             log.warning(f"Xabar o'chirishda xatolik: {e}")
         bot.send_message(uid, "✅ Rahmat! Obuna tasdiqlandi. /start buyrug'ini bosing.")
     else:
-        bot.send_message(uid, "❌ Siz hali guruhga a'zo bo'lmadingiz. Iltimos, a'zo bo'ling va qayta tekshiring.")
+        bot.send_message(uid, "❌ Siz hali kanalga a'zo bo'lmadingiz. Iltimos, a'zo bo'ling va qayta tekshiring.")
+
+
+# ============================================================
+#  👥 E'LON JOYLASH UCHUN "10 KISHI TAKLIF QILISH" TALABI
+# ============================================================
+# ⚠️ Bu ishlashi uchun BOT KANALDA ADMIN bo'lishi va "Foydalanuvchilarni
+# taklif qilish havolalari orqali qo'shish" huquqiga ega bo'lishi SHART
+# (Telegram: kanal sozlamalari -> Administrators -> bot -> Invite Users via Link).
+TAKLIF_FILE = "taklif_azolar.json"
+TAKLIF_TALAB_SONI = 10
+
+
+def load_taklif():
+    return _load_json(TAKLIF_FILE)
+
+
+def save_taklif(data):
+    _save_json(TAKLIF_FILE, data)
+
+
+def mening_taklif_havolam(uid):
+    """Foydalanuvchi uchun shaxsiy taklif havolasini beradi — agar hali
+    yaratilmagan bo'lsa, yangisini yaratadi va saqlaydi."""
+    taklif = load_taklif()
+    uid_str = str(uid)
+    if uid_str in taklif and taklif[uid_str].get("link"):
+        return taklif[uid_str]["link"]
+    try:
+        invite = bot.create_chat_invite_link(KANAL_ID, name=f"user_{uid}")
+        taklif[uid_str] = {"link": invite.invite_link, "soni": taklif.get(uid_str, {}).get("soni", 0)}
+        save_taklif(taklif)
+        return invite.invite_link
+    except Exception as e:
+        log.error(f"Taklif havolasi yaratilmadi ({uid}): {e}")
+        return GURUH_LINK
+
+
+def taklif_sonini_olish(uid):
+    taklif = load_taklif()
+    return taklif.get(str(uid), {}).get("soni", 0)
+
+
+@bot.chat_member_handler()
+def kanal_yangi_azo_handler(update):
+    """Kanalga kim qo'shilganini kuzatib boradi — agar u foydalanuvchining
+    shaxsiy taklif havolasi orqali kirgan bo'lsa, uning hisobiga +1 qo'shiladi."""
+    try:
+        if update.chat.id != KANAL_ID:
+            return
+        eski_holat = update.old_chat_member.status
+        yangi_holat = update.new_chat_member.status
+        if eski_holat in ('left', 'kicked') and yangi_holat in ('member', 'restricted'):
+            invite_link = update.invite_link
+            if not invite_link:
+                return
+            taklif = load_taklif()
+            for uid_str, item in taklif.items():
+                if item.get("link") == invite_link.invite_link:
+                    item["soni"] = item.get("soni", 0) + 1
+                    taklif[uid_str] = item
+                    save_taklif(taklif)
+                    yangi_son = item["soni"]
+                    try:
+                        if yangi_son >= TAKLIF_TALAB_SONI:
+                            bot.send_message(
+                                int(uid_str),
+                                f"🎉 Tabriklaymiz! Siz {TAKLIF_TALAB_SONI} kishini kanalga taklif qildingiz — "
+                                f"endi \"📢 E'lon berish\" orqali e'lon joylashingiz mumkin!"
+                            )
+                        else:
+                            bot.send_message(
+                                int(uid_str),
+                                f"✅ Taklif havolangiz orqali kanalga yana 1 kishi qo'shildi! "
+                                f"({yangi_son}/{TAKLIF_TALAB_SONI})"
+                            )
+                    except Exception:
+                        pass
+                    break
+    except Exception as e:
+        log.error(f"kanal_yangi_azo_handler xatoligi: {e}")
 
 
 def check_ban(message):
@@ -1600,12 +1638,6 @@ def admin_del_word(message):
 #  🔁 ESKI TUGMA FUNKSIYALARINI YANGI INLINE MENYUDAN QAYTA
 #  ISHLATISH UCHUN "SOXTA XABAR" YORDAMCHISI
 # ============================================================
-# Ko'p eski funksiyalar (masalan taksi_chaqirish_start, elon_berish...)
-# faqat message.from_user.id va message.chat.id dan foydalanadi.
-# Shu sababli ularni chaqirish uchun to'liq Telegram Message obyekti
-# yaratish shart emas — quyidagi yengil "shim" yetarli. Bu orqali kodni
-# ikki marta yozmasdan, YANGI HUB-MENYUDAGI tugmalar ESKI ishlaydigan
-# funksiyalarni to'g'ridan-to'g'ri chaqiradi.
 class _FakeUser:
     def __init__(self, uid):
         self.id = uid
@@ -3023,7 +3055,6 @@ def start(message):
                 taklifchi = get_user(taklifchi_id)
                 user["referred_by"] = taklifchi_id
 
-                # 🎁 Yangi qo'shilgan foydalanuvchiga "xush kelibsiz" bonusi
                 if REFERRAL_BONUS_YANGI > 0:
                     user["balance"] = user.get("balance", 0) + REFERRAL_BONUS_YANGI
                     user.setdefault("balance_tarix", []).append({
@@ -3032,7 +3063,6 @@ def start(message):
                     })
                 update_user(uid, user)
 
-                # 🎁 Taklif qilgan foydalanuvchiga bonus
                 taklifchi["referral_count"] = taklifchi.get("referral_count", 0) + 1
                 yangi_soni = taklifchi["referral_count"]
                 if REFERRAL_BONUS_TAKLIFCHI > 0:
@@ -3251,7 +3281,6 @@ def elonni_yuborish(uid, eid_list, index, message_id=None):
     if not elon:
         return
 
-    # 👀 Ko'rilganlar hisoblagichi — egasi o'zi ko'rsa hisoblanmaydi
     if elon.get("user_id") != uid:
         elon["korishlar"] = elon.get("korishlar", 0) + 1
         elonlar[eid] = elon
@@ -3417,8 +3446,6 @@ def elon_saqlash(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("layk_"))
 def elon_layk_bosish(call):
-    """E'longa layk bosish/olish — har bir foydalanuvchi bitta e'longa
-    faqat bitta marta layk bosa oladi (qayta bossa — layk qaytarib olinadi)."""
     uid = call.from_user.id
     eid = call.data.replace("layk_", "")
     elonlar = load_elonlar()
@@ -3445,7 +3472,6 @@ def elon_layk_bosish(call):
     elonlar[eid] = elon
     save_elonlar(elonlar)
 
-    # Xabar/rasm ostidagi tugmalarni yangilangan layk soni bilan qayta chizamiz
     layk_matni = "💔 Layk olish" if uid in layklar else "❤️ Layk"
     nav = types.InlineKeyboardMarkup(row_width=3)
     nav.add(
@@ -3548,8 +3574,6 @@ def izoh_yozish_yakun(message):
             pass
 
 
-
-
 @bot.callback_query_handler(func=lambda call: call.data.startswith("report_"))
 def elon_shikoyat(call):
     uid = call.from_user.id
@@ -3610,7 +3634,6 @@ def sotuvchiga_xabar_yuborish(message):
 
     try:
         xavfsiz_yuborish(egasi_id, matn, reply_markup=markup)
-        # Sotuvchi keyinroq ko'rishi uchun o'z profilida ham saqlaymiz
         egasi = get_user(egasi_id)
         egasi.setdefault("sotuvchi_xabarlar", []).append({
             "sana": datetime.now().strftime("%d.%m.%Y %H:%M"), "eid": eid,
@@ -4371,7 +4394,6 @@ def taksi_safar_yakunlash(call):
     haydovchilar[str(hid)] = h
     save_haydovchilar(haydovchilar)
 
-    # 🎁 Avtomatik cashback: safar narxining 1% yo'lovchi hamyoniga qaytadi
     if buyurtma.get("narx"):
         cashback_summa = round(buyurtma["narx"] * 0.01 / 500) * 500
         if cashback_summa > 0:
@@ -5367,6 +5389,20 @@ def elon_berish(message):
         send_sub_message(uid)
         return
 
+    if uid != ADMIN_ID:
+        soni = taklif_sonini_olish(uid)
+        if soni < TAKLIF_TALAB_SONI:
+            havola = mening_taklif_havolam(uid)
+            bot.send_message(
+                uid,
+                f"📢 E'lon joylash uchun avval kanalimizga kamida {TAKLIF_TALAB_SONI} kishi taklif qilishingiz kerak.\n\n"
+                f"👥 Hozircha taklif qilganlaringiz: {soni}/{TAKLIF_TALAB_SONI}\n\n"
+                f"🔗 Shaxsiy taklif havolangiz:\n{havola}\n\n"
+                f"Do'stlaringizni shu havola orqali kanalimizga taklif qiling — ular qo'shilishi bilanoq "
+                f"hisobingizga avtomatik qo'shiladi!"
+            )
+            return
+
     user = get_user(uid)
     if not user["premium"] and user["elon_count"] >= 3:
         markup = types.InlineKeyboardMarkup()
@@ -5382,8 +5418,6 @@ def elon_berish(message):
 
 
 def elon_hudud_korsat(uid, chat_id=None, message_id=None):
-    """VIP/oddiy tanlangandan so'ng hudud tanlash bosqichini ko'rsatadi
-    (yangi va tahrirlanadigan xabar uchun ham ishlatiladi)."""
     markup = types.InlineKeyboardMarkup(row_width=2)
     buttons = [types.InlineKeyboardButton(nom, callback_data=f"elonhudud_{kod}") for nom, kod in VILOYATLAR]
     markup.add(*buttons)
@@ -5404,7 +5438,6 @@ def elon_turi_tanlandi(call):
     bot.answer_callback_query(call.id)
 
     if turi == "vip" and (CLICK_SERVICE_ID or PAYME_MERCHANT_ID):
-        # VIP uchun avval onlayn to'lov qildiramiz, so'ng jarayon avtomatik davom etadi.
         user_data_temp[uid] = {"is_vip": False}
         tid = tolov_yarat(uid, 10000, maqsad="vip_elon", izoh="VIP e'lon")
         markup = types.InlineKeyboardMarkup(row_width=1)
@@ -5610,9 +5643,6 @@ def elon_tekshirish_bosqichi(uid):
 
 @bot.callback_query_handler(func=lambda call: call.data == "elon_ai_baho")
 def elon_ai_baholash(call):
-    """🧪 AI E'lon Baholovchi — Gemini yordamida e'lonni 100 balllik
-    tizimda baholaydi, kuchli/kuchsiz tomonlarini va yaxshilash
-    tavsiyalarini beradi."""
     uid = call.from_user.id
     bot.answer_callback_query(call.id, "🧪 AI tekshirmoqda...")
 
@@ -5719,13 +5749,6 @@ def elon_yakuniy_qaror(call):
         types.InlineKeyboardButton("🚩 Shikoyat", callback_data=f"report_{eid}"),
     )
 
-    # ⚠️ MUHIM TUZATISH: avval bu yerda faqat parse_mode="Markdown" bilan
-    # yuborilar edi. Agar sarlavha/tavsif/narx ichida "_" yoki "*" kabi
-    # belgilar bo'lsa, Telegram "can't parse entities" xatoligi bilan
-    # xabarni UMUMAN yubormay, e'lon jim-jimida kanalga chiqmay qolardi.
-    # Endi md_escape() bilan tozalanadi VA yuborish muvaffaqiyatsiz bo'lsa
-    # (masalan bot kanalda admin emasligi sababli) sizga ANIQ xato matni bilan
-    # xabar beriladi — shunda muammoni tezda topa olasiz.
     try:
         if data["photo"]:
             yuborilgan = xavfsiz_photo_yuborish(KANAL_ID, data["photo"], kanal_matni, reply_markup=kanal_markup)
@@ -5836,7 +5859,13 @@ if __name__ == "__main__":
 
     while True:
         try:
-            bot.infinity_polling(timeout=30, long_polling_timeout=30)
+            # ⚠️ allowed_updates ro'yxatiga "chat_member" qo'shildi — shu
+            # bo'lmasa, kanalga kim qo'shilgani haqidagi yangilanishlar
+            # botga umuman kelmaydi va taklif hisoblagichi ishlamaydi.
+            bot.infinity_polling(
+                timeout=30, long_polling_timeout=30,
+                allowed_updates=["message", "callback_query", "chat_member", "my_chat_member"]
+            )
         except Exception as e:
             log.error(f"Poll qilishda kutilmagan xatolik: {e}")
             time.sleep(5)
